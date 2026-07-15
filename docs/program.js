@@ -108,10 +108,11 @@ export function createProgram(dropbox, config) {
       const loaded = await loadCards();
       dirs = loaded.cardDirs;
     }
-    const validTypes = ['reference', 'request', 'report', 'acceptance', 'template'];
+    const validTypes = ['reference', 'knowledge', 'request', 'report', 'acceptance', 'template'];
     const direction = input.direction === 'claude-to-user' ? 'claude-to-user' : 'user-to-claude';
     const type = validTypes.includes(input.type) ? input.type : 'reference';
     const title = (input.title || '').trim() || '（無題）';
+    const subject = (input.subject || '').trim();
     const date = P.today();
 
     // ID 衝突（別端末との競合）に備え add モードで最大 3 回まで採番リトライ。
@@ -122,7 +123,7 @@ export function createProgram(dropbox, config) {
       const slug = P.slugify(input.title || id);
       const dirName = id + '_' + slug;
       const mdPath = join(cardsRoot, dirName, 'card.md');
-      const md = P.buildNewCardMarkdown({ id, title, direction, type, body: input.body, date });
+      const md = P.buildNewCardMarkdown({ id, title, direction, type, subject, body: input.body, date });
       try {
         await dropbox.uploadText(mdPath, md, { '.tag': 'add' });
       } catch (e) {
@@ -217,6 +218,13 @@ export function createProgram(dropbox, config) {
   function readDecisionQueue() { return readText('DECISION_QUEUE.md'); }
   function readControl() { return readText('CONTROL.md'); }
 
+  // ---- 主題台帳（読み取り専用・サジェスト用）----
+  // Cards/SUBJECTS.md の主題名一覧。ファイルが無ければ空配列（無くても動く）。
+  async function readSubjects() {
+    const text = await readText('Cards/SUBJECTS.md');
+    return P.parseSubjects(text);
+  }
+
   // ---- CARD_INDEX.md 再生成（ヘッダ保持・表のみ・rev 競合リトライ） ----
   async function regenerateIndex() {
     const { cards } = await loadCards();
@@ -249,6 +257,7 @@ export function createProgram(dropbox, config) {
     appendInbox,
     readDecisionQueue,
     readControl,
+    readSubjects,
     regenerateIndex,
     imgPath,
   };

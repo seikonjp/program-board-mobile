@@ -199,9 +199,131 @@ test('④ CARD_INDEX regeneration preserves header, replaces table', () => {
   assert.ok(out.startsWith('# CARD_INDEX — カード台帳\n\n> 所属: ArchPlan/Program/Cards/。説明1。\n> 説明2。'), 'ヘッダは保持される');
   // 旧行は消える
   assert.ok(!out.includes('旧行'), '古い表行は差し替えられる');
-  // 新行が入る（日本語ラベルへ変換・タグは・区切り）
-  assert.ok(out.includes('| C-001 | 屋根の理想 | あなた→AI | reference | 屋根・graphic | グラフィック整備着手時 | 新規 | 2026-07-15 |'), 'C-001 行が生成される');
+  // 新行が入る（日本語ラベルへ変換・タグは・区切り・subject 未指定は主題列が —）
+  assert.ok(out.includes('| C-001 | 屋根の理想 | あなた→AI | reference | — | 屋根・graphic | グラフィック整備着手時 | 新規 | 2026-07-15 |'), 'C-001 行が生成される');
   assert.ok(out.includes('| C-000 | 書式見本 |'), 'C-000 行も再生成される');
-  // 表ヘッダも含む
-  assert.ok(out.includes('| ID | 名称 | 方向 | 種別 | タグ | 浮上条件 | 状態 | 更新 |'), '表ヘッダを含む');
+  // 表ヘッダも含む（主題列を追加）
+  assert.ok(out.includes('| ID | 名称 | 方向 | 種別 | 主題 | タグ | 浮上条件 | 状態 | 更新 |'), '表ヘッダ（主題列つき）を含む');
+});
+
+// ---------------------------------------------------------------------------
+// ⑤ subject フィールド ＋ type=knowledge の往復無損失（v1.1）
+// ---------------------------------------------------------------------------
+const KNOWLEDGE_FIXTURE =
+`---
+id: C-002
+title: 自動調整adjustment とモジュール
+direction: user-to-claude
+type: knowledge
+subject: 自動調整
+tags: [module, adjustment, CM07]
+surface: "S0座標の錨の仕様起草時"
+status: annotated
+created: 2026-07-15
+---
+
+## 本文
+
+CMP自動調整adjustment こそが建築モジュールと大きく関わってくる。
+
+## 注釈（私が記入）
+
+種別は知見(knowledge)。要点: 調整量子と判定閾値は別概念。
+
+## 処理記録
+
+- ↳ 2026-07-15 作成
+- ↳ 2026-07-15 種別をknowledge（知見）へ変更・主題=自動調整
+`;
+
+test('⑤ subject と type=knowledge が往復無損失（byte 一致・型解釈）', () => {
+  const parsed = P.parseCard(KNOWLEDGE_FIXTURE);
+  assert.strictEqual(P.serializeCard(parsed), KNOWLEDGE_FIXTURE, 'subject/knowledge を含む card.md も byte 往復無損失');
+  assert.strictEqual(parsed.fm.type, 'knowledge', 'type=knowledge を型解釈');
+  assert.strictEqual(parsed.fm.subject, '自動調整', 'subject（引用符なし）を型解釈');
+
+  // subject を含まない旧カードは subject='' となり壊れない（後方互換）
+  const legacy = P.parseCard(CARD_FIXTURE);
+  assert.strictEqual(legacy.fm.subject, '', 'subject 欄なしの旧カードは subject=""');
+  assert.strictEqual(P.serializeCard(legacy), CARD_FIXTURE, 'subject 欄なしでも byte 往復無損失（後方互換）');
+
+  // readCardFromText が subject を UI 用オブジェクトに載せる
+  const card = P.readCardFromText(KNOWLEDGE_FIXTURE, 'C-002_x', []);
+  assert.strictEqual(card.type, 'knowledge');
+  assert.strictEqual(card.subject, '自動調整');
+
+  // TYPE_JP に知見が入っている
+  assert.strictEqual(P.TYPE_JP.knowledge, '知見');
+});
+
+// ---------------------------------------------------------------------------
+// ⑥ buildNewCardMarkdown が subject 行（type 直後）と knowledge 型を出力し再往復する
+// ---------------------------------------------------------------------------
+test('⑥ buildNewCardMarkdown は subject と knowledge を出力し再パースで往復する', () => {
+  const md = P.buildNewCardMarkdown({
+    id: 'C-005', title: '知見テスト', direction: 'user-to-claude',
+    type: 'knowledge', subject: '自動調整', body: '本文行', date: '2026-07-15',
+  });
+  const lines = md.split('\n');
+  assert.ok(md.includes('type: knowledge'), 'type: knowledge を出力');
+  assert.strictEqual(lines[lines.indexOf('type: knowledge') + 1], 'subject: 自動調整', 'subject 行は type の直後');
+
+  // 空 subject は "" として出力（テンプレートと同形）
+  const md2 = P.buildNewCardMarkdown({
+    id: 'C-006', title: 'x', direction: 'user-to-claude',
+    type: 'reference', subject: '', body: '', date: '2026-07-15',
+  });
+  assert.ok(md2.includes('subject: ""'), '空 subject は "" で出力');
+
+  // 生成物は再パース→再直列化で byte 往復無損失（subject/knowledge を保持）
+  const rp = P.parseCard(md);
+  assert.strictEqual(rp.fm.type, 'knowledge');
+  assert.strictEqual(rp.fm.subject, '自動調整');
+  assert.strictEqual(P.serializeCard(rp), md, '生成 md も byte 往復無損失');
+});
+
+// ---------------------------------------------------------------------------
+// ⑦ CARD_INDEX に主題列を追加して再生成（knowledge 型・主題を反映）
+// ---------------------------------------------------------------------------
+test('⑦ CARD_INDEX 再生成に主題列が入り knowledge/主題を反映する', () => {
+  const existing =
+`# CARD_INDEX — カード台帳
+
+> 所属: Cards/。説明。
+
+| ID | 名称 | 方向 | 種別 | タグ | 浮上条件 | 状態 | 更新 |
+|----|------|------|------|------|----------|------|------|
+| C-000 | 旧行（8列） | — | template | — | — | 消化 | 2026-07-15 |
+`;
+  const cards = [
+    { id: 'C-001', title: '世界のライティング', direction: 'user-to-claude', type: 'reference', subject: 'ライティング', tags: ['graphics', 'world'], surface: 'S4着手時', status: 'annotated', created: '2026-07-15' },
+    { id: 'C-002', title: '自動調整', direction: 'user-to-claude', type: 'knowledge', subject: '自動調整', tags: [], surface: '', status: 'annotated', created: '2026-07-15' },
+    { id: 'C-003', title: '主題なし', direction: 'user-to-claude', type: 'reference', subject: '', tags: [], surface: '', status: 'new', created: '2026-07-15' },
+  ];
+  const out = P.regenerateIndexContent(existing, cards);
+
+  assert.ok(out.startsWith('# CARD_INDEX — カード台帳'), 'ヘッダは保持');
+  assert.ok(!out.includes('旧行（8列）'), '旧8列の表行は差し替えられる');
+  assert.ok(out.includes('| ID | 名称 | 方向 | 種別 | 主題 | タグ | 浮上条件 | 状態 | 更新 |'), '9列（主題列つき）ヘッダ');
+  assert.ok(out.includes('| C-001 | 世界のライティング | あなた→AI | reference | ライティング | graphics・world | S4着手時 | 注釈済み | 2026-07-15 |'), 'C-001 行（主題=ライティング）');
+  assert.ok(out.includes('| C-002 | 自動調整 | あなた→AI | knowledge | 自動調整 | — | — | 注釈済み | 2026-07-15 |'), 'C-002 行（種別=knowledge・主題=自動調整）');
+  assert.ok(out.includes('| C-003 | 主題なし | あなた→AI | reference | — | — | — | 新規 | 2026-07-15 |'), 'subject 空は主題列が —');
+});
+
+// ---------------------------------------------------------------------------
+// ⑧ parseSubjects（SUBJECTS.md の主題名一覧・無くても壊れない）
+// ---------------------------------------------------------------------------
+test('⑧ parseSubjects は主題名を抽出し、無し/空でも壊れない', () => {
+  const subjectsMd =
+`# SUBJECTS — 主題台帳
+
+> 説明文（bullet でない行は無視）。
+
+- 自動調整 — CMP ADJ・建築モジュール・量子・判定閾値まわり
+- ライティング — 世界の光・時刻/季節/天候の色彩変化
+`;
+  assert.deepStrictEqual(P.parseSubjects(subjectsMd), ['自動調整', 'ライティング'], '主題名（em ダッシュ前）を抽出');
+  assert.deepStrictEqual(P.parseSubjects(null), [], 'null でも空配列');
+  assert.deepStrictEqual(P.parseSubjects(''), [], '空文字でも空配列');
+  assert.deepStrictEqual(P.parseSubjects('- モジュール'), ['モジュール'], 'em ダッシュ無しは行全体を主題名');
 });

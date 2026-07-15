@@ -19,6 +19,9 @@ let columnsWrap;       // #board-columns
 let pendingFiles = []; // 新規カードに添付する File[]
 let pendingUrls = [];  // プレビュー用 objectURL
 let activeSegment = 'new';
+let newType = 'reference';    // 新規カードの種別セグメント（既定=参考）
+let subjectsFromLedger = [];  // SUBJECTS.md の主題名（サジェスト用・一度だけ取得）
+let subjectsFetched = false;
 
 function create(ctx) {
   root = h('div', 'board');
@@ -87,7 +90,8 @@ function syncSegments(ctx) {
 }
 
 function renderColumns(ctx) {
-  const cards = ctx.state.cards || [];
+  // type=knowledge（知見・ストック型）はカンバンから除外し「知見」タブへ分離する（フロー汚染防止）。
+  const cards = (ctx.state.cards || []).filter((c) => c.type !== 'knowledge');
   columnsWrap.innerHTML = '';
   const byStatus = {};
   STATUS_ORDER.forEach((s) => (byStatus[s] = []));
@@ -158,6 +162,7 @@ function openDetail(card, ctx) {
   meta.appendChild(h('span', 'chip chip-id', card.id));
   meta.appendChild(h('span', 'chip', ctx.constants.STATUS_JP[card.status] || card.status));
   if (card.type) meta.appendChild(h('span', 'chip', ctx.constants.TYPE_JP[card.type] || card.type));
+  if (card.subject) meta.appendChild(h('span', 'chip', '主題: ' + card.subject));
   if (card.direction) meta.appendChild(h('span', 'chip', ctx.constants.DIRECTION_JP[card.direction] || card.direction));
   if (card.surface) meta.appendChild(h('span', 'chip', '浮上: ' + card.surface));
   (card.tags || []).forEach((tag) => meta.appendChild(h('span', 'chip', '#' + tag)));
@@ -231,12 +236,29 @@ function buildNewModal(ctx) {
   bodyText.placeholder = '本文（任意）';
   body.appendChild(labeled('本文', bodyText));
 
-  const typeSel = h('select', 'field');
-  typeSel.id = 'new-type';
-  [['reference', '参考'], ['request', '要望'], ['report', '報告'], ['acceptance', '検収依頼']].forEach(([v, t]) => {
-    const o = h('option', null, t); o.value = v; typeSel.appendChild(o);
+  // 種別セグメント（参考/知見/要望・既定=参考）
+  const typeSeg = h('div', 'type-segment');
+  typeSeg.id = 'new-type-seg';
+  [['reference', '参考'], ['knowledge', '知見'], ['request', '要望']].forEach(([v, t]) => {
+    const b = h('button', 'seg-btn', t);
+    b.type = 'button';
+    b.dataset.type = v;
+    b.onclick = () => { newType = v; syncTypeSegment(); };
+    typeSeg.appendChild(b);
   });
-  body.appendChild(labeled('種別', typeSel));
+  body.appendChild(labeled('種別', typeSeg));
+
+  // 主題入力（datalist サジェスト＝読込済み全カードの subject ∪ SUBJECTS.md の主題名・自由入力可）
+  const subjectInput = h('input', 'field');
+  subjectInput.id = 'new-subject';
+  subjectInput.type = 'text';
+  subjectInput.placeholder = '主題（任意・例: 自動調整）';
+  subjectInput.autocomplete = 'off';
+  subjectInput.setAttribute('list', 'subject-list');
+  const datalist = document.createElement('datalist');
+  datalist.id = 'subject-list';
+  body.appendChild(labeled('主題', subjectInput));
+  body.appendChild(datalist);
 
   const dirSel = h('select', 'field');
   dirSel.id = 'new-direction';
@@ -266,10 +288,44 @@ function labeled(labelText, field) {
 
 function openNewCard(ctx) {
   renderThumbs();
+  syncTypeSegment();
+  populateSubjectDatalist(ctx);
+  ensureSubjects(ctx);
   document.getElementById('new-backdrop').hidden = false;
 }
 function closeNew() {
   document.getElementById('new-backdrop').hidden = true;
+}
+
+function syncTypeSegment() {
+  const seg = document.getElementById('new-type-seg');
+  if (!seg) return;
+  for (const b of seg.children) b.classList.toggle('is-active', b.dataset.type === newType);
+}
+
+// 既存カードの subject 値 ∪ SUBJECTS.md の主題名を datalist に反映（自由入力は妨げない）。
+function populateSubjectDatalist(ctx) {
+  const datalist = document.getElementById('subject-list');
+  if (!datalist) return;
+  const set = new Set();
+  (ctx.state.cards || []).forEach((c) => { if (c.subject) set.add(c.subject); });
+  subjectsFromLedger.forEach((s) => { if (s) set.add(s); });
+  datalist.innerHTML = '';
+  [...set].sort((a, b) => a.localeCompare(b, 'ja')).forEach((s) => {
+    const o = document.createElement('option');
+    o.value = s;
+    datalist.appendChild(o);
+  });
+}
+
+// SUBJECTS.md を一度だけ取得してサジェストへ合流（無ければ既存カードの subject のみ）。
+function ensureSubjects(ctx) {
+  if (subjectsFetched) return;
+  subjectsFetched = true;
+  Promise.resolve()
+    .then(() => ctx.program.readSubjects())
+    .then((names) => { subjectsFromLedger = names || []; populateSubjectDatalist(ctx); })
+    .catch(() => { /* SUBJECTS.md 無し等は無視（サジェストは既存カードのみ） */ });
 }
 
 function addPendingFiles(fileList) {
@@ -281,8 +337,10 @@ function clearPending() {
   pendingFiles = [];
   pendingUrls.forEach((u) => URL.revokeObjectURL(u));
   pendingUrls = [];
+  newType = 'reference';
   const t = document.getElementById('new-title'); if (t) t.value = '';
   const b = document.getElementById('new-body'); if (b) b.value = '';
+  const s = document.getElementById('new-subject'); if (s) s.value = '';
 }
 function renderThumbs() {
   const wrap = document.getElementById('new-thumbs');
@@ -304,7 +362,8 @@ function renderThumbs() {
 async function submitNew(ctx, submitBtn) {
   const title = document.getElementById('new-title').value.trim();
   const body = document.getElementById('new-body').value;
-  const type = document.getElementById('new-type').value;
+  const subject = document.getElementById('new-subject').value.trim();
+  const type = newType;
   const direction = document.getElementById('new-direction').value;
   if (!title && pendingFiles.length === 0) {
     ctx.toast('タイトルまたは写真が必要です');
@@ -314,7 +373,7 @@ async function submitNew(ctx, submitBtn) {
   submitBtn.textContent = '作成中…';
   try {
     const images = await ctx.prepareImages(pendingFiles);
-    await ctx.program.createCard({ title: title || '（無題）', body, type, direction, images }, ctx.state.cardDirs);
+    await ctx.program.createCard({ title: title || '（無題）', body, type, direction, subject, images }, ctx.state.cardDirs);
     clearPending();
     closeNew();
     ctx.toast('カードを作成しました');

@@ -261,6 +261,40 @@ textarea.field { min-height: 84px; resize: vertical; }
   font-size: 14px; word-break: break-word;
 }
 
+/* ---- 種別セグメント（新規カード） ---- */
+.type-segment { display: flex; gap: 6px; }
+.type-segment .seg-btn {
+  flex: 1; min-height: 40px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink-soft);
+  font-size: 14px; font-weight: 600; cursor: pointer;
+}
+.type-segment .seg-btn.is-active { background: var(--brand); color: #fff; border-color: var(--brand); }
+
+/* ---- 知見タブ ---- */
+.k-search { margin: 6px 0 12px; }
+.k-list { display: flex; flex-direction: column; gap: 16px; }
+.k-group { }
+.k-group-head {
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 4px 2px 6px; margin-bottom: 6px;
+  border-bottom: 1px solid var(--line);
+}
+.k-group-title { font-weight: 700; font-size: 16px; }
+.k-group-count {
+  font-size: 12px; color: var(--ink-soft);
+  background: #eef0f4; border-radius: 999px; padding: 1px 8px;
+}
+.k-row {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 10px; margin-bottom: 6px; cursor: pointer;
+}
+.k-row-head { display: flex; align-items: center; gap: 8px; }
+.k-row-title { font-weight: 600; font-size: 15px; word-break: break-word; }
+.k-row-excerpt { color: var(--ink-soft); font-size: 13px; margin-top: 4px; word-break: break-word; }
+
 /* ---- 裁定ビュー ---- */
 .raw-md {
   white-space: pre-wrap; word-break: break-word;
@@ -370,7 +404,7 @@ textarea.field { min-height: 84px; resize: vertical; }
     --ink-soft: #9aa3b5;
     --line: #2c3444;
   }
-  .column-count, .chip { background: #2c3444; }
+  .column-count, .chip, .k-group-count { background: #2c3444; }
   .tray-body, .detail-text { background: #171b24; }
   .btn-later { background: #2c3444; color: #d8c98a; }
   .segment { background: var(--surface); }

@@ -27,6 +27,7 @@ export const DIRECTION_JP = {
 
 export const TYPE_JP = {
   reference: '参考',
+  knowledge: '知見',
   request: '要望',
   report: '報告',
   acceptance: '検収依頼',
@@ -77,6 +78,7 @@ export function parseCard(text) {
     title: raw.title !== undefined ? raw.title : '',
     direction: raw.direction !== undefined ? raw.direction : '',
     type: raw.type !== undefined ? raw.type : '',
+    subject: parseQuoted(raw.subject),
     tags: parseTags(raw.tags),
     surface: parseQuoted(raw.surface),
     status: raw.status !== undefined ? raw.status : '',
@@ -191,6 +193,23 @@ export function appendUnderHeading(body, heading, line) {
   return body.slice(0, after) + newSection + tail;
 }
 
+// SUBJECTS.md（主題台帳）から主題名一覧を抽出（`- 主題名 — 説明` の箇条書き）。
+// ファイルが無い・書式が違っても壊れない（該当行が無ければ空配列）。読み取り専用。
+export function parseSubjects(text) {
+  const out = [];
+  if (!text) return out;
+  const re = /^\s*[-*]\s+(.+?)\s*$/gm;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const line = m[1];
+    // 「主題名 — 説明」を em ダッシュ（前後空白付き）で分割。無ければ行全体を主題名とみなす。
+    const dashIdx = line.indexOf(' — ');
+    const name = (dashIdx !== -1 ? line.slice(0, dashIdx) : line).trim();
+    if (name) out.push(name);
+  }
+  return out;
+}
+
 // チェックリスト `- [ ]` / `- [x]` の抽出（将来の進捗ビュー用）。
 export function parseChecklist(text) {
   const items = [];
@@ -283,13 +302,15 @@ export function today() {
 // カード新規 Markdown 生成
 // ---------------------------------------------------------------------------
 
-export function buildNewCardMarkdown({ id, title, direction, type, body, date }) {
+export function buildNewCardMarkdown({ id, title, direction, type, subject, body, date }) {
+  const subj = (subject || '').replace(/[\r\n]+/g, ' ').trim();
   const fm = [
     '---',
     'id: ' + id,
     'title: ' + (title || '').replace(/[\r\n]+/g, ' '),
     'direction: ' + direction,
     'type: ' + type,
+    'subject: ' + (subj ? subj : '""'),
     'tags: []',
     'surface: ""',
     'status: new',
@@ -319,6 +340,7 @@ export function readCardFromText(text, dir, imageNames) {
     title: parsed.fm.title,
     direction: parsed.fm.direction,
     type: parsed.fm.type,
+    subject: parsed.fm.subject,
     tags: parsed.fm.tags,
     surface: parsed.fm.surface,
     status: parsed.fm.status,
@@ -343,14 +365,14 @@ function cell(v) {
 }
 
 export function buildIndexTable(cards) {
-  const head = '| ID | 名称 | 方向 | 種別 | タグ | 浮上条件 | 状態 | 更新 |';
-  const sep = '|----|------|------|------|------|----------|------|------|';
+  const head = '| ID | 名称 | 方向 | 種別 | 主題 | タグ | 浮上条件 | 状態 | 更新 |';
+  const sep = '|----|------|------|------|------|------|----------|------|------|';
   const rows = cards.map((c) => {
     const dir = DIRECTION_JP[c.direction] || (c.direction ? c.direction : '—');
     const type = c.type || '—';
     const tags = (c.tags && c.tags.length) ? c.tags.join('・') : '—';
     const status = STATUS_JP[c.status] || (c.status ? c.status : '—');
-    return `| ${cell(c.id)} | ${cell(c.title)} | ${dir} | ${cell(type)} | ${cell(tags)} | ${cell(c.surface)} | ${status} | ${cell(c.created)} |`;
+    return `| ${cell(c.id)} | ${cell(c.title)} | ${dir} | ${cell(type)} | ${cell(c.subject)} | ${cell(tags)} | ${cell(c.surface)} | ${status} | ${cell(c.created)} |`;
   });
   return [head, sep, ...rows].join('\n');
 }
