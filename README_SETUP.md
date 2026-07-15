@@ -20,7 +20,7 @@ Dropbox に「このアプリが Program フォルダを読み書きしてよい
 3. 選択肢を次のとおりにする。
    - **Choose an API**: `Scoped access`
    - **Choose the type of access**: `Full Dropbox`（`ArchPlan/Program` は Apps フォルダの外にあるため `Full Dropbox` を選ぶ）
-   - **Name your app**: 好きな名前（例: `program-board-mobile-你的名字`）。世界で一意なので、被ったら少し変える。
+   - **Name your app**: 好きな名前（例: `program-board-mobile-seiko`）。世界で一意なので、被ったら少し変える。
 4. 作成すると設定画面（Settings タブ）が開く。**「App key」** の文字列をコピーしておく（後で使う。これは公開してよい値）。
 5. **Permissions タブ**を開き、次の4つにチェックを入れて **Submit** する。
    - `files.metadata.read`
@@ -107,7 +107,7 @@ Dropbox に「このアプリが Program フォルダを読み書きしてよい
 
 - **接続で「state 不一致」や「invalid redirect_uri」**: 手順2-4の Redirect URI が公開 URL と完全一致していない。末尾スラッシュ・大文字小文字・`http`/`https` を見直す。
 - **「config.js に Dropbox App key を設定してください」**: 手順2-1の書き換えを忘れている。
-- **カードが出てこない / 「Program フォルダが見つからない」**: 設定画面の Program ルートパスが実際のフォルダと違う。`/Ap/…` のように Dropbox の絶対パスで指定する（既定 `/ArchPlan/Program`）。
+- **カードが出てこない / 「Program フォルダが見つからない」**: 設定画面の Program ルートパスが実際のフォルダと違う。`/ArchPlan/…` のように Dropbox の絶対パスで指定する（既定 `/ArchPlan/Program`）。
 - **画像が表示されない**: オフラインだと画像は読み込めません（テキストは最終取得分が見えます）。オンラインで手動更新（右上 ⟳）してください。
 - **権限エラー**: 手順1-5の4つの Permission にチェックが入っているか確認。変更した場合は一度アプリで「切断」→再接続。
 
