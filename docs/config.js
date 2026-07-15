@@ -10,7 +10,7 @@
 export const config = {
   // Dropbox App Console で作成した App の「App key」をここに設定する。
   // PKCE（公開クライアント）フローのため client secret は不要・使わない。
-  dropboxClientId: 'PUT_YOUR_DROPBOX_APP_KEY_HERE',
+  dropboxClientId: 'cc2fedm0eq4eia9',
 
   // Program ルート（Dropbox 上の絶対パス・末尾スラッシュなし）。
   // Mac 版と同じ実ファイルを見る（二重の正なし）。設定画面で上書き可。
