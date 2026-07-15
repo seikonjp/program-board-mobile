@@ -315,7 +315,8 @@ async function runDiagnostics() {
   show();
 }
 
-async function startConnect() {
+async function startConnect(opts) {
+  const force = !!(opts && opts.force);
   if (!config.dropboxClientId || config.dropboxClientId.includes('PUT_YOUR')) {
     toast('config.js に Dropbox App key を設定してください');
     $('#connect-hint').textContent = 'docs/config.js の dropboxClientId が未設定です。';
@@ -329,12 +330,13 @@ async function startConnect() {
     state = randomState();
   } catch (e) { flowLog('鍵生成に失敗: ' + (e && e.message || e)); toast('鍵生成に失敗'); return; }
   stashPkce({ verifier, state });
-  flowLog('一時鍵を保存→Dropbox認可画面へ移動');
+  flowLog(force ? '一時鍵を保存→Dropbox再承認画面へ移動（force）' : '一時鍵を保存→Dropbox認可画面へ移動');
   location.href = buildAuthorizeUrl({
     clientId: config.dropboxClientId,
     redirectUri: redirectUri(),
     challenge,
     state,
+    forceReapprove: force,
   });
 }
 
@@ -357,10 +359,21 @@ async function handleRedirect() {
       verifier: pk.verifier,
       redirectUri: redirectUri(),
     });
-    flowLog('トークン交換成功→保存');
+    flowLog('トークン交換成功（refresh鍵: ' + (tokens.refresh_token ? 'あり' : '⚠なし') + ' / scope: ' + (tokens.scope || '省略') + '）→保存');
     saveTokens(tokens);
     dropbox.setTokens(tokens);
     cleanUrl();
+    if (!tokens.refresh_token) {
+      // 自動再承認では長期鍵が省かれることがある→一度だけ明示的な再承認でやり直す
+      if (!sessionStorage.getItem('pbm_forced')) {
+        sessionStorage.setItem('pbm_forced', '1');
+        flowLog('長期鍵なし→再承認モードで自動やり直し');
+        await startConnect({ force: true });
+        return false;
+      }
+      flowLog('再承認でも長期鍵なし＝要調査（このログを報告してください）');
+    }
+    sessionStorage.removeItem('pbm_forced');
     return true;
   } catch (e) {
     cleanUrl();

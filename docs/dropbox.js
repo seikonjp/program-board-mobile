@@ -96,7 +96,7 @@ export function takePkce() {
 // ---------------------------------------------------------------------------
 
 // 認可 URL を組み立てる（呼び出し側で verifier/state を stash 済みの前提）。
-export function buildAuthorizeUrl({ clientId, redirectUri, challenge, state }) {
+export function buildAuthorizeUrl({ clientId, redirectUri, challenge, state, forceReapprove }) {
   const q = new URLSearchParams({
     client_id: clientId,
     response_type: 'code',
@@ -106,6 +106,7 @@ export function buildAuthorizeUrl({ clientId, redirectUri, challenge, state }) {
     token_access_type: 'offline', // refresh token を得る
     state,
   });
+  if (forceReapprove) q.set('force_reapprove', 'true'); // 自動再承認でrefresh/scopeが省かれた時の再取得用
   return AUTHORIZE_URL + '?' + q.toString();
 }
 
