@@ -8,6 +8,7 @@ import assert from 'node:assert';
 
 import * as P from '../docs/parser.js';
 import { createDropboxClient, apiArg } from '../docs/dropbox.js';
+import { enabledViewIds } from '../docs/config.js';
 
 // C-000 相当の書式見本 fixture（実ファイルは読まない・往復無損失の検証用）。
 const CARD_FIXTURE =
@@ -411,4 +412,26 @@ test('⑪ 混在桁 ID は数値順に採番・ソートされる', () => {
   const ids = ['C-0003', 'C-000', 'C-002', 'C-0010', 'C-001'];
   const sorted = ids.slice().sort(P.compareCardId);
   assert.deepStrictEqual(sorted, ['C-000', 'C-001', 'C-002', 'C-0003', 'C-0010'], '桁数でなく数値順');
+});
+
+// ---------------------------------------------------------------------------
+// ⑫ タブ順（v1.4）＋ Report タブ抽出（type=report・cardsForType 再利用）
+// ---------------------------------------------------------------------------
+test('⑫ タブ順は Board/Reference/Knowledge/Consult/Decision/Report/Acceptance(=tray)/Quick', () => {
+  // enabledViewIds は config.views の有効順で ID を返す（tray の表示名 Acceptance）。
+  assert.deepStrictEqual(
+    enabledViewIds(),
+    ['board', 'reference', 'knowledge', 'consult', 'decision', 'report', 'tray', 'quick'],
+    'タブ順（Report 新設・Decision→Report→Acceptance→Quick）',
+  );
+});
+
+test('⑫b cardsForType(type=report) は report カードのみ抽出（Report タブ）', () => {
+  const cards = [
+    { id: 'C-001', type: 'reference' },
+    { id: 'C-006', type: 'report' },
+    { id: 'C-007', type: 'acceptance' },
+    { id: 'C-008', type: 'report' },
+  ];
+  assert.deepStrictEqual(P.cardsForType(cards, 'report').map((c) => c.id), ['C-006', 'C-008'], 'report のみ（acceptance は含めない）');
 });

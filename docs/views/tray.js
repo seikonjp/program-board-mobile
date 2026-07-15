@@ -109,7 +109,7 @@ async function act(ctx, card, action, comment, btns) {
 
 registerView({
   id: 'tray',
-  tabLabel: 'Tray',
+  tabLabel: 'Acceptance',
   badge,
   create,
   onData,
