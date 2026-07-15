@@ -1,3 +1,6 @@
+/* hidden属性は常にdisplay指定より優先（オーバーレイ等の切替の生命線） */
+[hidden] { display: none !important; }
+
 /* Program Board Mobile — style.css （依存ゼロ・iPhone/iPad 同一） */
 
 :root {
