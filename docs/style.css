@@ -304,6 +304,9 @@ textarea.field { min-height: 84px; resize: vertical; }
   border-radius: var(--radius); padding: 12px; overflow-x: auto;
 }
 .decision .view-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+.queue-details { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 12px; }
+.queue-details > summary { cursor: pointer; color: var(--ink-soft); font-weight: 600; font-size: 14px; padding: 6px 0; }
+.queue-details-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; margin: 6px 0; }
 
 /* ---- モーダル/シート ---- */
 .backdrop {

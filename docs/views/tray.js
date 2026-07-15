@@ -1,16 +1,11 @@
 'use strict';
 
-// views/tray.js — 検収トレイ。type=report/acceptance かつ status=acceptance を大きく縦並び。
-// 各カードに OK / NG（コメント必須）/ あとで の3ボタン。
+// views/tray.js — 検収トレイ（Acceptance タブ）。type=report/acceptance かつ status=acceptance を縦並び。
+// タイル部は全タブ共通の cardTile を使用（サムネイル+タイトル+chip・v1.5 §3）＝一覧の見た目が全タブで揃う。
+// タイルをタップで詳細シート（原寸画像・本文・注釈・処理記録）。各カードに OK / NG（コメント必須）/ あとで の3ボタン。
 
 import { registerView } from '../registry.js';
-
-function h(tag, cls, text) {
-  const e = document.createElement(tag);
-  if (cls) e.className = cls;
-  if (text !== undefined) e.textContent = text;
-  return e;
-}
+import { h, cardTile } from './shared.js';
 
 let root, listEl;
 
@@ -48,27 +43,9 @@ function render(ctx) {
 
 function trayCard(card, ctx) {
   const c = h('div', 'tray-card');
-  const head = h('div', 'tray-card-head');
-  head.appendChild(h('span', 'chip chip-id', card.id));
-  head.appendChild(h('span', 'tray-card-title', card.title || '（無題）'));
-  c.appendChild(head);
 
-  if (card.images && card.images.length) {
-    const imgs = h('div', 'tray-imgs');
-    card.images.forEach((f) => {
-      const im = h('img', 'tray-img');
-      ctx.attachImage(im, card.dir, f);
-      imgs.appendChild(im);
-    });
-    c.appendChild(imgs);
-  }
-  if (card.sections.body) c.appendChild(h('pre', 'tray-body', card.sections.body));
-  if (card.sections.record) {
-    const rec = h('details', 'tray-record');
-    rec.appendChild(h('summary', null, '処理記録'));
-    rec.appendChild(h('pre', 'detail-text', card.sections.record));
-    c.appendChild(rec);
-  }
+  // タイル部は全タブ共通（Board と同一）。タップで詳細シート（原寸画像・本文・処理記録）を開く。
+  c.appendChild(cardTile(ctx, card, { showType: true }));
 
   const actions = h('div', 'tray-actions');
   const comment = h('input', 'field');

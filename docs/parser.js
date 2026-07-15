@@ -26,7 +26,8 @@ export const DIRECTION_LABEL = {
   'claude-to-user': 'AI→user',
 };
 
-// type（ユーザー発 reference/knowledge/consult ＋ AI発 report/acceptance ＋ template）。
+// type（ユーザー発 reference/knowledge/consult ＋ AI発 report/acceptance/decision ＋ template）。
+// decision は AI 発の裁定依頼（v1.5・作成フォームには出さない）。
 // request は廃止語＝読み込み時は consult 扱い（ファイルは書き換えない）。
 export const TYPE_LABEL = {
   reference: 'reference',
@@ -34,6 +35,7 @@ export const TYPE_LABEL = {
   consult: 'consult',
   report: 'report',
   acceptance: 'acceptance',
+  decision: 'decision',
   template: 'template',
 };
 

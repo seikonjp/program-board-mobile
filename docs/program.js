@@ -108,7 +108,7 @@ export function createProgram(dropbox, config) {
       const loaded = await loadCards();
       dirs = loaded.cardDirs;
     }
-    const validTypes = ['reference', 'knowledge', 'consult', 'request', 'report', 'acceptance', 'template'];
+    const validTypes = ['reference', 'knowledge', 'consult', 'request', 'report', 'acceptance', 'decision', 'template'];
     const direction = input.direction === 'claude-to-user' ? 'claude-to-user' : 'user-to-claude';
     const type = validTypes.includes(input.type) ? input.type : 'reference';
     const title = (input.title || '').trim() || '（無題）';
