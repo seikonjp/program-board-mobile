@@ -89,7 +89,7 @@ export function createProgram(dropbox, config) {
       nextCache.set(rec.mdPath, { rev: rec.mdRev, card });
       cards.push(card);
     }
-    cards.sort((a, b) => String(a.id).localeCompare(String(b.id)));
+    cards.sort((a, b) => P.compareCardId(a.id, b.id));
     return { cards, cache: nextCache, cardDirs };
   }
 
@@ -108,7 +108,7 @@ export function createProgram(dropbox, config) {
       const loaded = await loadCards();
       dirs = loaded.cardDirs;
     }
-    const validTypes = ['reference', 'knowledge', 'request', 'report', 'acceptance', 'template'];
+    const validTypes = ['reference', 'knowledge', 'consult', 'request', 'report', 'acceptance', 'template'];
     const direction = input.direction === 'claude-to-user' ? 'claude-to-user' : 'user-to-claude';
     const type = validTypes.includes(input.type) ? input.type : 'reference';
     const title = (input.title || '').trim() || '（無題）';

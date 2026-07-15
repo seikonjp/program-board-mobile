@@ -52,7 +52,7 @@ async function load(ctx, force) {
 
 registerView({
   id: 'decision',
-  tabLabel: '裁定',
+  tabLabel: 'Decision',
   create,
   onShow,
 });

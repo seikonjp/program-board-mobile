@@ -30,7 +30,9 @@ export const config = {
   //（app.js など既存コードを編集しない設計）。
   views: [
     { id: 'board', enabled: true },
+    { id: 'reference', enabled: true },
     { id: 'knowledge', enabled: true },
+    { id: 'consult', enabled: true },
     { id: 'tray', enabled: true },
     { id: 'quick', enabled: true },
     { id: 'decision', enabled: true },

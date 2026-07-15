@@ -61,6 +61,6 @@ async function send(ctx, submit) {
 
 registerView({
   id: 'quick',
-  tabLabel: 'クイック',
+  tabLabel: 'Quick',
   create,
 });

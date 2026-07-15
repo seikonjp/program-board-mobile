@@ -12,27 +12,46 @@
 
 export const STATUS_ORDER = ['new', 'annotated', 'waiting', 'acceptance', 'consumed'];
 
-export const STATUS_JP = {
-  new: '新規',
-  annotated: '注釈済み',
-  waiting: '浮上待ち',
-  acceptance: '検収待ち',
-  consumed: '消化',
+// 分類語彙は英語表示（v1.3）。値そのものが英語のため恒等写像だが、将来の別名に備え表で持つ。
+export const STATUS_LABEL = {
+  new: 'new',
+  annotated: 'annotated',
+  waiting: 'waiting',
+  acceptance: 'acceptance',
+  consumed: 'consumed',
 };
 
-export const DIRECTION_JP = {
-  'user-to-claude': 'あなた→AI',
-  'claude-to-user': 'AI→あなた',
+export const DIRECTION_LABEL = {
+  'user-to-claude': 'user→AI',
+  'claude-to-user': 'AI→user',
 };
 
-export const TYPE_JP = {
-  reference: '参考',
-  knowledge: '知見',
-  request: '要望',
-  report: '報告',
-  acceptance: '検収依頼',
-  template: '雛形',
+// type（ユーザー発 reference/knowledge/consult ＋ AI発 report/acceptance ＋ template）。
+// request は廃止語＝読み込み時は consult 扱い（ファイルは書き換えない）。
+export const TYPE_LABEL = {
+  reference: 'reference',
+  knowledge: 'knowledge',
+  consult: 'consult',
+  report: 'report',
+  acceptance: 'acceptance',
+  template: 'template',
 };
+
+// 廃止語 request → consult へ正規化（表示・タブ抽出用。card.md の値は書き換えない）。
+export function normalizeType(t) {
+  return t === 'request' ? 'consult' : (t || '');
+}
+
+// type の英語表示ラベル（正規化込み）。
+export function typeLabel(t) {
+  const n = normalizeType(t);
+  return TYPE_LABEL[n] || n;
+}
+
+// type 別タブ（reference/knowledge/consult）へ出すカードを抽出。request は consult 扱い。
+export function cardsForType(cards, type) {
+  return (cards || []).filter((c) => normalizeType(c.type) === type);
+}
 
 // ---------------------------------------------------------------------------
 // カード（card.md）のパース／シリアライズ（frontmatter 往復無損失）
@@ -256,7 +275,22 @@ export function appendToInbox(text, entry) {
 // ID 採番・slug 化・日付
 // ---------------------------------------------------------------------------
 
-// Dropbox の list_folder で得たフォルダ名配列から次の ID を決める（既存最大 +1・3桁0詰め）。
+// カード ID（"C-0003" / dir 名 "C-0003_slug"）から数値部を取り出す。C-\d+ を全許容。
+export function cardIdNum(id) {
+  const m = /C-(\d+)/.exec(id == null ? '' : String(id));
+  return m ? parseInt(m[1], 10) : Number.MAX_SAFE_INTEGER;
+}
+
+// カード ID の比較（混在桁でも数値順。同値/非該当は文字列比較でフォールバック）。
+export function compareCardId(a, b) {
+  const na = cardIdNum(a);
+  const nb = cardIdNum(b);
+  if (na !== nb) return na - nb;
+  return String(a).localeCompare(String(b));
+}
+
+// Dropbox の list_folder で得たフォルダ名配列から次の ID を決める（既存最大 +1・4桁0詰め）。
+// パースは C-\d+ を全許容（3桁の旧カードと混在可）。9999 超は padStart(4) が自然に5桁へ拡張。
 export function nextCardId(names) {
   let max = -1;
   for (const name of (names || [])) {
@@ -266,7 +300,7 @@ export function nextCardId(names) {
       if (n > max) max = n;
     }
   }
-  return 'C-' + String(max + 1).padStart(3, '0');
+  return 'C-' + String(max + 1).padStart(4, '0');
 }
 
 export function slugify(title) {
@@ -368,10 +402,10 @@ export function buildIndexTable(cards) {
   const head = '| ID | 名称 | 方向 | 種別 | 主題 | タグ | 浮上条件 | 状態 | 更新 |';
   const sep = '|----|------|------|------|------|------|----------|------|------|';
   const rows = cards.map((c) => {
-    const dir = DIRECTION_JP[c.direction] || (c.direction ? c.direction : '—');
-    const type = c.type || '—';
+    const dir = DIRECTION_LABEL[c.direction] || (c.direction ? c.direction : '—');
+    const type = c.type ? typeLabel(c.type) : '—';
     const tags = (c.tags && c.tags.length) ? c.tags.join('・') : '—';
-    const status = STATUS_JP[c.status] || (c.status ? c.status : '—');
+    const status = STATUS_LABEL[c.status] || (c.status ? c.status : '—');
     return `| ${cell(c.id)} | ${cell(c.title)} | ${dir} | ${cell(type)} | ${cell(c.subject)} | ${cell(tags)} | ${cell(c.surface)} | ${status} | ${cell(c.created)} |`;
   });
   return [head, sep, ...rows].join('\n');

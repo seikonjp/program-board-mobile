@@ -1,16 +1,12 @@
 'use strict';
 
-// views/board.js — ボード（状態5列）。狭幅=セグメント切替の縦1カラム／広幅=カンバン。
+// views/board.js — Board（状態5列）。狭幅=セグメント切替の縦1カラム／広幅=カンバン。
+// 全 type を表示（v1.3。knowledge 除外は撤廃）。カードは type chip を出す。
+// 一覧タイル・詳細シートは shared.js を共有（全 type 統一書式）。
 // モバイルの主動線＝「写真を選ぶ」→カード作成。
 
 import { registerView } from '../registry.js';
-// DOM ヘルパはローカルに用意。
-function h(tag, cls, text) {
-  const e = document.createElement(tag);
-  if (cls) e.className = cls;
-  if (text !== undefined) e.textContent = text;
-  return e;
-}
+import { h, cardTile, openCardDetail } from './shared.js';
 
 const STATUS_ORDER = ['new', 'annotated', 'waiting', 'acceptance', 'consumed'];
 
@@ -19,7 +15,7 @@ let columnsWrap;       // #board-columns
 let pendingFiles = []; // 新規カードに添付する File[]
 let pendingUrls = [];  // プレビュー用 objectURL
 let activeSegment = 'new';
-let newType = 'reference';    // 新規カードの種別セグメント（既定=参考）
+let newType = 'reference';    // 新規カードの種別セグメント（既定=Reference）
 let subjectsFromLedger = [];  // SUBJECTS.md の主題名（サジェスト用・一度だけ取得）
 let subjectsFetched = false;
 
@@ -51,7 +47,7 @@ function create(ctx) {
   const seg = h('div', 'board-segments');
   seg.id = 'board-segments';
   STATUS_ORDER.forEach((s) => {
-    const b = h('button', 'segment', ctx.constants.STATUS_JP[s]);
+    const b = h('button', 'segment', ctx.constants.STATUS_LABEL[s]);
     b.dataset.status = s;
     b.onclick = () => { activeSegment = s; syncSegments(ctx); };
     seg.appendChild(b);
@@ -64,8 +60,7 @@ function create(ctx) {
   columnsWrap.dataset.active = activeSegment;
   root.appendChild(columnsWrap);
 
-  // 詳細モーダル・新規カードモーダルを内包
-  root.appendChild(buildDetailModal(ctx));
+  // 新規カードモーダルを内包（詳細シートは shared.js のグローバル）
   root.appendChild(buildNewModal(ctx));
 
   return root;
@@ -90,8 +85,8 @@ function syncSegments(ctx) {
 }
 
 function renderColumns(ctx) {
-  // type=knowledge（知見・ストック型）はカンバンから除外し「知見」タブへ分離する（フロー汚染防止）。
-  const cards = (ctx.state.cards || []).filter((c) => c.type !== 'knowledge');
+  // 全 type を状態別カンバンに配置（v1.3。knowledge も含む）。
+  const cards = ctx.state.cards || [];
   columnsWrap.innerHTML = '';
   const byStatus = {};
   STATUS_ORDER.forEach((s) => (byStatus[s] = []));
@@ -103,93 +98,15 @@ function renderColumns(ctx) {
     const col = h('div', 'column');
     col.dataset.status = s;
     const head = h('div', 'column-head');
-    head.appendChild(h('span', 'column-title', ctx.constants.STATUS_JP[s]));
+    head.appendChild(h('span', 'column-title', ctx.constants.STATUS_LABEL[s]));
     head.appendChild(h('span', 'column-count', String(byStatus[s].length)));
     col.appendChild(head);
     if (byStatus[s].length === 0) {
       col.appendChild(h('p', 'column-empty', '（なし）'));
     }
-    byStatus[s].forEach((c) => col.appendChild(cardTile(c, ctx)));
+    byStatus[s].forEach((c) => col.appendChild(cardTile(ctx, c, { showType: true })));
     columnsWrap.appendChild(col);
   });
-}
-
-function cardTile(card, ctx) {
-  const t = h('div', 'card-tile');
-  if (card.images && card.images.length) {
-    const img = h('img', 'card-thumb');
-    img.alt = card.title || '';
-    ctx.attachImage(img, card.dir, card.images[0]);
-    t.appendChild(img);
-  } else {
-    t.appendChild(h('div', 'card-thumb card-thumb-empty', '画像なし'));
-  }
-  const body = h('div', 'card-tile-body');
-  body.appendChild(h('div', 'card-tile-title', card.title || '（無題）'));
-  const meta = h('div', 'card-meta');
-  meta.appendChild(h('span', 'chip chip-id', card.id));
-  if (card.type) meta.appendChild(h('span', 'chip', ctx.constants.TYPE_JP[card.type] || card.type));
-  (card.tags || []).forEach((tag) => meta.appendChild(h('span', 'chip', '#' + tag)));
-  body.appendChild(meta);
-  t.appendChild(body);
-  t.onclick = () => openDetail(card, ctx);
-  return t;
-}
-
-// ---- 詳細モーダル ----
-function buildDetailModal(ctx) {
-  const backdrop = h('div', 'backdrop');
-  backdrop.id = 'detail-backdrop';
-  backdrop.hidden = true;
-  backdrop.addEventListener('click', (e) => { if (e.target.id === 'detail-backdrop') backdrop.hidden = true; });
-  const sheet = h('div', 'sheet');
-  sheet.id = 'detail-sheet';
-  backdrop.appendChild(sheet);
-  return backdrop;
-}
-function openDetail(card, ctx) {
-  const sheet = document.getElementById('detail-sheet');
-  sheet.innerHTML = '';
-  const head = h('div', 'sheet-head');
-  head.appendChild(h('h2', null, card.title || '（無題）'));
-  const close = h('button', 'icon-btn', '×');
-  close.onclick = () => { document.getElementById('detail-backdrop').hidden = true; };
-  head.appendChild(close);
-  sheet.appendChild(head);
-
-  const body = h('div', 'sheet-body');
-  const meta = h('div', 'card-meta');
-  meta.appendChild(h('span', 'chip chip-id', card.id));
-  meta.appendChild(h('span', 'chip', ctx.constants.STATUS_JP[card.status] || card.status));
-  if (card.type) meta.appendChild(h('span', 'chip', ctx.constants.TYPE_JP[card.type] || card.type));
-  if (card.subject) meta.appendChild(h('span', 'chip', '主題: ' + card.subject));
-  if (card.direction) meta.appendChild(h('span', 'chip', ctx.constants.DIRECTION_JP[card.direction] || card.direction));
-  if (card.surface) meta.appendChild(h('span', 'chip', '浮上: ' + card.surface));
-  (card.tags || []).forEach((tag) => meta.appendChild(h('span', 'chip', '#' + tag)));
-  body.appendChild(meta);
-
-  if (card.images && card.images.length) {
-    const imgs = h('div', 'detail-imgs');
-    card.images.forEach((f) => {
-      const im = h('img', 'detail-img');
-      ctx.attachImage(im, card.dir, f);
-      imgs.appendChild(im);
-    });
-    body.appendChild(imgs);
-  }
-  addSection(body, '本文', card.sections.body);
-  addSection(body, '注釈', card.sections.note);
-  addSection(body, '処理記録', card.sections.record);
-
-  sheet.appendChild(body);
-  document.getElementById('detail-backdrop').hidden = false;
-}
-function addSection(wrap, title, content) {
-  if (!content) return;
-  const s = h('div', 'detail-section');
-  s.appendChild(h('h4', null, title));
-  s.appendChild(h('pre', 'detail-text', content));
-  wrap.appendChild(s);
 }
 
 // ---- 新規カードモーダル ----
@@ -236,10 +153,10 @@ function buildNewModal(ctx) {
   bodyText.placeholder = '本文（任意）';
   body.appendChild(labeled('本文', bodyText));
 
-  // 種別セグメント（参考/知見/要望・既定=参考）
+  // 種別セグメント（Reference/Knowledge/Consult・既定=Reference）
   const typeSeg = h('div', 'type-segment');
   typeSeg.id = 'new-type-seg';
-  [['reference', '参考'], ['knowledge', '知見'], ['request', '要望']].forEach(([v, t]) => {
+  [['reference', 'Reference'], ['knowledge', 'Knowledge'], ['consult', 'Consult']].forEach(([v, t]) => {
     const b = h('button', 'seg-btn', t);
     b.type = 'button';
     b.dataset.type = v;
@@ -262,7 +179,7 @@ function buildNewModal(ctx) {
 
   const dirSel = h('select', 'field');
   dirSel.id = 'new-direction';
-  [['user-to-claude', 'あなた→AI'], ['claude-to-user', 'AI→あなた']].forEach(([v, t]) => {
+  [['user-to-claude', 'user→AI'], ['claude-to-user', 'AI→user']].forEach(([v, t]) => {
     const o = h('option', null, t); o.value = v; dirSel.appendChild(o);
   });
   body.appendChild(labeled('方向', dirSel));
@@ -388,7 +305,7 @@ async function submitNew(ctx, submitBtn) {
 
 registerView({
   id: 'board',
-  tabLabel: 'ボード',
+  tabLabel: 'Board',
   create,
   onData,
   onShow,
