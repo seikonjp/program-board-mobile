@@ -8,6 +8,7 @@
 import * as P from './parser.js';
 
 const MOBILE_MARK = '（📱）'; // モバイル発の追記に付す出所マーク（INBOX / 検収記録）
+const TRASH_DIR = '_trash'; // 削除カードの退避先（Cards/_trash/・物理削除しない=復元可能）
 
 const IMG_EXT = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']);
 
@@ -54,6 +55,8 @@ export function createProgram(dropbox, config) {
     for (const ent of entries) {
       const rel = ent.path_display.slice(cardsRoot.length + 1); // Cards/ 以降
       const seg = rel.split('/');
+      // _trash 配下は台帳・全タブ・Board・検索から一元除外（走査の入口・v1.7）。
+      if (seg[0] === TRASH_DIR) continue;
       if (ent['.tag'] === 'folder' && seg.length === 1 && /^C-\d+/.test(seg[0])) {
         cardDirs.push(seg[0]);
         if (!filesByDir.has(seg[0])) filesByDir.set(seg[0], { images: [] });
@@ -194,6 +197,41 @@ export function createProgram(dropbox, config) {
     await regenerateIndex();
   }
 
+  // Cards 配下に収まっているか（.. を含まない・cardsRoot 直下配下）検査（移動先ガード用・v1.7）。
+  function assertUnderCards(p) {
+    if (p.split('/').some((s) => s === '..')) throw new Error('不正なパス（.. を含む）: ' + p);
+    if (p !== cardsRoot && !p.startsWith(cardsRoot + '/')) throw new Error('Cards 範囲外のパス: ' + p);
+  }
+
+  // ---- カード削除（Cards/_trash/ へ移動・物理削除しない=復元可能・v1.7） ----
+  async function deleteCard(id) {
+    const dir = await findCardDir(id);
+    if (!dir) throw new Error('カードが見つかりません: ' + id);
+    const from = join(cardsRoot, dir);
+    const to = join(cardsRoot, TRASH_DIR, dir);
+    assertUnderCards(from); // 移動元・移動先とも Cards 内に限定（パスガード）
+    assertUnderCards(to);
+    await dropbox.move(from, to); // move のみ（削除 API は使わない）
+    await regenerateIndex();      // _trash は走査除外のため台帳から自然に消える
+    return { movedTo: to };
+  }
+
+  // ---- コメント追記（処理記録へ・即動作・rev 競合リトライ・v1.7） ----
+  async function addComment(id, text) {
+    const clean = String(text || '').replace(/[\r\n]+/g, ' ').trim();
+    if (clean === '') throw new Error('コメントが空です');
+    const dir = await findCardDir(id);
+    if (!dir) throw new Error('カードが見つかりません: ' + id);
+    const line = P.buildCommentLine(P.today(), clean, '📱');
+    const mdPath = join(cardsRoot, dir, 'card.md');
+    await dropbox.updateTextFileWithRetry(mdPath, (t) => {
+      const card = P.parseCard(t);
+      card.body = P.appendUnderHeading(card.body, '処理記録', line);
+      return P.serializeCard(card);
+    });
+    // 処理記録は CARD_INDEX の列に影響しないため index 再生成は不要。
+  }
+
   // ---- INBOX 追記（§1 のみ・rev 競合リトライ） ----
   async function appendInbox(textLine) {
     const clean = String(textLine || '').replace(/[\r\n]+/g, ' ').trim();
@@ -254,6 +292,8 @@ export function createProgram(dropbox, config) {
     createCard,
     acceptCard,
     updateCard,
+    deleteCard,
+    addComment,
     appendInbox,
     readDecisionQueue,
     readControl,

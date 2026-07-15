@@ -298,6 +298,17 @@ export function createDropboxClient({ clientId, fetchImpl, tokens, onTokensChang
     return upload(dpath, body, mode, opts);
   }
 
+  // move_v2（フォルダ/ファイルの移動のみ）。削除 API は一切実装しない（物理削除しない）。
+  // 呼び出し側で from/to とも Program/Cards/ 配下に限定すること（program.js のパスガード）。
+  async function move(fromPath, toPath) {
+    return rpc('/files/move_v2', {
+      from_path: fromPath,
+      to_path: toPath,
+      autorename: true, // 移動先に同名があれば Dropbox 側で退避名にリネーム（上書きしない）
+      allow_ownership_transfer: false,
+    });
+  }
+
   // list_folder（ページング込みで全件返す）。
   async function listFolder(dpath, { recursive = false } = {}) {
     const first = await rpc('/files/list_folder', { path: dpath, recursive, include_media_info: false });
@@ -360,6 +371,7 @@ export function createDropboxClient({ clientId, fetchImpl, tokens, onTokensChang
     download,
     upload,
     uploadText,
+    move,
     listFolder,
     updateTextFileWithRetry,
   };

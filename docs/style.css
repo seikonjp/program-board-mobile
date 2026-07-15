@@ -339,6 +339,31 @@ textarea.field { min-height: 84px; resize: vertical; }
 .detail-section { margin-top: 12px; }
 .detail-section h4 { margin: 0 0 4px; font-size: 14px; color: var(--ink-soft); }
 
+/* ---- カード詳細の操作系（v1.7・詳細=選択状態のみ） ---- */
+.detail-ops {
+  margin-top: 16px; border-top: 1px solid var(--line); padding-top: 14px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.op-toggle-row { display: flex; gap: 8px; }
+.op-toggle {
+  flex: 1; min-height: var(--tap);
+  border-radius: 10px; border: 1px solid var(--line);
+  background: var(--surface); color: var(--ink-soft);
+  font-size: 15px; font-weight: 600; cursor: pointer;
+}
+.op-ok.is-on { background: var(--ok); color: #fff; border-color: var(--ok); }
+.op-ng.is-on { background: var(--ng); color: #fff; border-color: var(--ng); }
+textarea.op-comment { min-height: 56px; resize: vertical; }
+.op-send-row { display: flex; }
+.op-send { flex: 1; }
+.btn-danger {
+  min-height: var(--tap);
+  border-radius: 10px; border: 1px solid var(--ng);
+  background: transparent; color: var(--ng);
+  font-size: 15px; font-weight: 600; cursor: pointer;
+}
+.btn-danger:disabled { opacity: .5; }
+
 .new-thumbs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
 .new-thumb { width: 76px; height: 76px; object-fit: cover; border-radius: 8px; cursor: pointer; }
 .new-thumbs:empty { display: none; }

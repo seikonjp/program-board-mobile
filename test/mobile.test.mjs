@@ -11,6 +11,7 @@ import { dirname, resolve } from 'node:path';
 
 import * as P from '../docs/parser.js';
 import { createDropboxClient, apiArg } from '../docs/dropbox.js';
+import { createProgram } from '../docs/program.js';
 import { enabledViewIds } from '../docs/config.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -577,4 +578,113 @@ test('⑮b board.js は種類別カラム（boardColumns）を使い、タイル
   // shared.js の cardTile が日本語の状態 chip を付与
   const shared = readDoc('views/shared.js');
   assert.ok(shared.includes('chip chip-status') && shared.includes('P.STATUS_LABEL[card.status]'), 'cardTile が状態 chip（日本語ラベル）を付与');
+});
+
+// ---------------------------------------------------------------------------
+// ⑯ direction 別操作モード＋コメント行生成／処理記録追記の往復（v1.7）
+// ---------------------------------------------------------------------------
+test('⑯ cardOperationMode（direction別）＋ buildCommentLine ＋ 処理記録追記の無損失（v1.7）', () => {
+  // direction 別の操作モード（一覧タイルには出さない・詳細のみで使う判定）
+  assert.strictEqual(P.cardOperationMode('user-to-claude'), 'edit', 'ユーザー発=編集（削除+コメント即動作）');
+  assert.strictEqual(P.cardOperationMode('claude-to-user'), 'review', 'AI発=レビュー（OK/NGトグル表示のみ・コメント準備中）');
+  assert.strictEqual(P.cardOperationMode(''), 'none', '方向不明は操作を出さない');
+  assert.strictEqual(P.cardOperationMode(undefined), 'none');
+
+  // コメント行（📱=モバイル）
+  const line = P.buildCommentLine('2026-07-15', 'ここを直したい', '📱');
+  assert.strictEqual(line, '- ↳ 2026-07-15 コメント（あなた・📱）: ここを直したい', 'コメント行の書式');
+
+  // 処理記録へ追記 → 本文/注釈は不変・既存記録行も残る（往復無損失の追記）
+  const parsed = P.parseCard(CARD_FIXTURE);
+  const before = parsed.body;
+  const after = P.appendUnderHeading(before, '処理記録', line);
+  assert.ok(after.includes(line), '処理記録にコメント行が入る');
+  const secB = P.parseSections(before);
+  const secA = P.parseSections(after);
+  assert.strictEqual(secA['本文'], secB['本文'], '本文は不変');
+  assert.strictEqual(secA['注釈（私が記入）'], secB['注釈（私が記入）'], '注釈は不変');
+  assert.ok(secA['処理記録'].includes('テンプレートとして作成'), '既存の処理記録行も残る');
+});
+
+// ---------------------------------------------------------------------------
+// ⑰ dropbox.move は /files/move_v2 を呼ぶ（移動のみ・from/to・削除APIでない）（v1.7）
+// ---------------------------------------------------------------------------
+test('⑰ dropbox.move は /files/move_v2（移動のみ・from/to・autorename）を呼ぶ（v1.7）', async () => {
+  let called = null;
+  const res = (body) => ({
+    ok: true, status: 200, headers: { get: () => null },
+    text: async () => body, json: async () => JSON.parse(body || 'null'),
+  });
+  async function mockFetch(url, opts) {
+    if (url.endsWith('/files/move_v2')) { called = { url, body: JSON.parse(opts.body) }; return res(JSON.stringify({ metadata: {} })); }
+    throw new Error('想定外のURL: ' + url);
+  }
+  const client = createDropboxClient({
+    clientId: 't', fetchImpl: mockFetch,
+    tokens: { access_token: 'a', refresh_token: 'r', expires_at: Date.now() + 3600000 },
+  });
+  await client.move('/ArchPlan/Program/Cards/C-0001_x', '/ArchPlan/Program/Cards/_trash/C-0001_x');
+  assert.ok(called, 'move_v2 が呼ばれる');
+  assert.strictEqual(called.body.from_path, '/ArchPlan/Program/Cards/C-0001_x');
+  assert.strictEqual(called.body.to_path, '/ArchPlan/Program/Cards/_trash/C-0001_x', '移動先も Cards 内');
+  assert.strictEqual(called.body.autorename, true, '衝突時は退避名（上書きしない）');
+});
+
+// ---------------------------------------------------------------------------
+// ⑱ loadCards は _trash 配下を走査除外する（台帳・全タブ・検索から消える）（v1.7）
+// ---------------------------------------------------------------------------
+test('⑱ loadCards は _trash 配下のカードを走査除外する（fetch モック・v1.7）', async () => {
+  const root = '/ArchPlan/Program';
+  const cardsRoot = root + '/Cards';
+  const mdText = (id) => `---\nid: ${id}\ntitle: t${id}\ndirection: user-to-claude\ntype: reference\ntags: []\nsurface: ""\nstatus: new\ncreated: 2026-07-15\n---\n\n## 本文\n\nx\n`;
+  const entries = [
+    { '.tag': 'folder', path_display: cardsRoot + '/C-0001_a' },
+    { '.tag': 'file', path_display: cardsRoot + '/C-0001_a/card.md', rev: 'r1' },
+    { '.tag': 'folder', path_display: cardsRoot + '/_trash' },
+    { '.tag': 'folder', path_display: cardsRoot + '/_trash/C-0002_b' },
+    { '.tag': 'file', path_display: cardsRoot + '/_trash/C-0002_b/card.md', rev: 'r2' },
+  ];
+  function res({ status = 200, body = '', headers = {} }) {
+    return {
+      ok: status >= 200 && status < 300, status,
+      headers: { get: (k) => headers[k] ?? headers[k.toLowerCase()] ?? null },
+      text: async () => body, json: async () => JSON.parse(body || 'null'),
+      arrayBuffer: async () => new TextEncoder().encode(body).buffer,
+    };
+  }
+  async function mockFetch(url, opts) {
+    if (url.endsWith('/files/list_folder')) return res({ status: 200, body: JSON.stringify({ entries, has_more: false, cursor: 'c' }) });
+    if (url.endsWith('/files/download')) {
+      const arg = JSON.parse(opts.headers['Dropbox-API-Arg']);
+      const id = arg.path.includes('C-0001') ? 'C-0001' : 'C-0002';
+      return res({ status: 200, body: mdText(id), headers: { 'Dropbox-API-Result': JSON.stringify({ rev: id === 'C-0001' ? 'r1' : 'r2' }) } });
+    }
+    throw new Error('想定外のURL: ' + url);
+  }
+  const client = createDropboxClient({
+    clientId: 't', fetchImpl: mockFetch,
+    tokens: { access_token: 'a', refresh_token: 'r', expires_at: Date.now() + 3600000 },
+  });
+  const program = createProgram(client, { programRoot: root });
+  const { cards, cardDirs } = await program.loadCards();
+  assert.deepStrictEqual(cards.map((c) => c.id), ['C-0001'], '_trash 配下（C-0002）は台帳に出ない');
+  assert.deepStrictEqual(cardDirs, ['C-0001_a'], 'cardDirs も _trash を含まない');
+});
+
+// ---------------------------------------------------------------------------
+// ⑲ shared.js の詳細シートに操作系を差し込む／一覧タイルには出さない（ソース構造・v1.7）
+// ---------------------------------------------------------------------------
+test('⑲ 詳細シートに操作系（削除/コメント/OKNGトグル）・タイルには出さない（v1.7）', () => {
+  const shared = readDoc('views/shared.js');
+  // 詳細シート（openCardDetail）にのみ操作系を差し込む
+  const openFn = shared.slice(shared.indexOf('export function openCardDetail('), shared.indexOf('function addSection('));
+  assert.ok(openFn.includes('addOperations(ctx, body, card)'), 'openCardDetail が操作系を差し込む');
+  // 一覧タイル（cardTile）には操作系を出さない
+  const tileFn = shared.slice(shared.indexOf('export function cardTile('), shared.indexOf('// ---- 詳細シート'));
+  assert.ok(!tileFn.includes('addOperations'), '一覧タイルには操作系を出さない');
+  // 操作系の配線: 編集=deleteCard/addComment、レビュー=準備中
+  const opsFn = shared.slice(shared.indexOf('function addOperations('));
+  assert.ok(opsFn.includes('P.cardOperationMode(card.direction)'), 'direction で出し分け');
+  assert.ok(opsFn.includes('ctx.program.deleteCard(card.id)') && opsFn.includes('ctx.program.addComment(card.id'), '編集モード=削除+コメント（即動作）');
+  assert.ok(opsFn.includes('準備中'), 'レビューモードの送信は準備中（不活性）');
 });

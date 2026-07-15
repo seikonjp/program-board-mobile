@@ -92,6 +92,9 @@ export function openCardDetail(ctx, card) {
   addSection(body, '注釈', card.sections && card.sections.note);
   addSection(body, '処理記録', card.sections && card.sections.record);
 
+  // 操作系（v1.7・詳細=選択状態のみ）。ユーザー発=削除+コメント（即動作）／AI発=OK/NGトグル(表示のみ)+コメント(準備中)。
+  addOperations(ctx, body, card);
+
   dSheet.appendChild(body);
   dBackdrop.hidden = false;
 }
@@ -102,4 +105,89 @@ function addSection(wrap, title, content) {
   s.appendChild(h('h4', null, title));
   s.appendChild(h('pre', 'detail-text', content));
   wrap.appendChild(s);
+}
+
+// textarea を内容に合わせて自動伸長（上限240pxで以降スクロール）。
+function autoGrow(ta) {
+  ta.style.height = 'auto';
+  ta.style.height = Math.min(ta.scrollHeight, 240) + 'px';
+}
+
+// カード詳細の操作系（v1.7）。direction で出し分け。一覧タイルには出さない（Acceptance タブの3ボタンとは別系統）。
+function addOperations(ctx, wrap, card) {
+  const mode = P.cardOperationMode(card.direction);
+  if (mode === 'none') return;
+  const ops = h('div', 'detail-ops');
+
+  if (mode === 'review') {
+    // OK/NG トグル（どちらか一方 or 無選択・同じボタン再タップで解除）。表示のみ＝保存しない（画面内のみ）。
+    const row = h('div', 'op-toggle-row');
+    const okBtn = h('button', 'op-toggle op-ok', 'OK');
+    const ngBtn = h('button', 'op-toggle op-ng', 'NG');
+    let sel = null;
+    const sync = () => {
+      okBtn.classList.toggle('is-on', sel === 'ok');
+      ngBtn.classList.toggle('is-on', sel === 'ng');
+    };
+    okBtn.onclick = () => { sel = (sel === 'ok') ? null : 'ok'; sync(); };
+    ngBtn.onclick = () => { sel = (sel === 'ng') ? null : 'ng'; sync(); };
+    row.appendChild(okBtn);
+    row.appendChild(ngBtn);
+    ops.appendChild(row);
+  }
+
+  // コメント入力欄（両モード共通の大きさ・日本語20〜30字が見える2行前後・上限なし・自動伸長）。
+  const ta = h('textarea', 'field op-comment');
+  ta.rows = 2;
+  ta.placeholder = 'コメント';
+  ta.addEventListener('input', () => autoGrow(ta));
+  ops.appendChild(ta);
+
+  const sendRow = h('div', 'op-send-row');
+  if (mode === 'edit') {
+    // ユーザー発: コメント送信（処理記録へ即追記）。
+    const send = h('button', 'btn-primary op-send', '送信');
+    send.onclick = async () => {
+      const text = ta.value.trim();
+      if (!text) { ta.focus(); return; }
+      send.disabled = true;
+      try {
+        await ctx.program.addComment(card.id, text);
+        ctx.toast('コメントを追記しました');
+        await ctx.reload();
+        const updated = (ctx.state.cards || []).find((c) => c.id === card.id);
+        if (updated) openCardDetail(ctx, updated); else dBackdrop.hidden = true;
+      } catch (e) {
+        ctx.toast('コメント追記に失敗: ' + (e.message || e));
+        send.disabled = false;
+      }
+    };
+    sendRow.appendChild(send);
+    ops.appendChild(sendRow);
+
+    // ユーザー発: 削除（確認 → Cards/_trash へ移動・復元可能）。
+    const del = h('button', 'btn-danger op-delete', 'このカードを削除');
+    del.onclick = async () => {
+      if (!window.confirm('このカードを削除しますか？（Cards/_trash へ移動します・復元可能）')) return;
+      del.disabled = true;
+      try {
+        await ctx.program.deleteCard(card.id);
+        ctx.toast('カードを削除しました（_trash へ移動）');
+        await ctx.reload();
+        dBackdrop.hidden = true;
+      } catch (e) {
+        ctx.toast('削除に失敗: ' + (e.message || e));
+        del.disabled = false;
+      }
+    };
+    ops.appendChild(del);
+  } else {
+    // AI発: 送信は準備中（不活性・今回は配線しない）。
+    const send = h('button', 'btn-primary op-send', '送信（準備中）');
+    send.disabled = true;
+    sendRow.appendChild(send);
+    ops.appendChild(sendRow);
+  }
+
+  wrap.appendChild(ops);
 }

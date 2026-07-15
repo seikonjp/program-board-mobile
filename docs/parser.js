@@ -56,6 +56,26 @@ export function normalizeType(t) {
   return t === 'request' ? 'consult' : (t || '');
 }
 
+// ---------------------------------------------------------------------------
+// カード詳細の操作系（v1.7）: direction 別の操作モード・コメント行の生成
+// ---------------------------------------------------------------------------
+
+// カード詳細画面に出す操作の種類を direction から決める（v1.7）。一覧タイルには出さない。
+//   'edit'   = ユーザー発（user-to-claude）: 削除＋コメント追記（即動作）
+//   'review' = AI発（claude-to-user）: OK/NG トグル（表示のみ）＋コメント（準備中）
+//   'none'   = 方向不明: 操作を出さない
+export function cardOperationMode(direction) {
+  if (direction === 'user-to-claude') return 'edit';
+  if (direction === 'claude-to-user') return 'review';
+  return 'none';
+}
+
+// 処理記録へ追記するコメント行を生成（v1.7）。出所マーク mark は 📱（モバイル）/ 💻（Mac）。
+//   例: - ↳ 2026-07-15 コメント（あなた・📱）: 内容
+export function buildCommentLine(date, text, mark) {
+  return '- ↳ ' + date + ' コメント（あなた・' + mark + '）: ' + text;
+}
+
 // type の英語表示ラベル（正規化込み）。
 export function typeLabel(t) {
   const n = normalizeType(t);
