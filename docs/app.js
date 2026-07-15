@@ -282,7 +282,7 @@ async function runDiagnostics() {
   lines.push('環境: ' + (navigator.standalone ? 'ホーム画面アプリ' : 'ブラウザ') + ' / online=' + navigator.onLine);
   lines.push('トークン保持: ' + (dropbox.isConnected() ? 'あり' : 'なし'));
   show();
-  await probe('(1) GET api到達', () => fetch('https://api.dropboxapi.com/oauth2/token', { method: 'GET' }));
+  await probe('(1) 到達確認(no-cors)', async () => { await fetch('https://api.dropboxapi.com/oauth2/token', { method: 'GET', mode: 'no-cors' }); return { status: '到達' }; });
   await probe('(2) POST token単純', () => fetch('https://api.dropboxapi.com/oauth2/token', {
     method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: 'grant_type=authorization_code&code=diag&client_id=' + encodeURIComponent(config.dropboxClientId),
