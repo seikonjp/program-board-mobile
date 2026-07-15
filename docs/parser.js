@@ -76,6 +76,11 @@ export function buildCommentLine(date, text, mark) {
   return '- ↳ ' + date + ' コメント（あなた・' + mark + '）: ' + text;
 }
 
+// 本文/タイトル編集の処理記録行を生成（v1.8）。mark は 📱（モバイル）/ 💻（Mac）。
+export function buildEditLine(date, mark) {
+  return '- ↳ ' + date + ' 本文/タイトル編集（あなた・' + mark + '）';
+}
+
 // type の英語表示ラベル（正規化込み）。
 export function typeLabel(t) {
   const n = normalizeType(t);
@@ -256,6 +261,28 @@ export function appendUnderHeading(body, heading, line) {
   return body.slice(0, after) + newSection + tail;
 }
 
+// 指定見出しの節内容を丸ごと置換（他セクションは byte 不変・v1.8）。
+// 見出しが無ければ末尾へ新設（appendUnderHeading と同じフォールバック）。本文編集で使う。
+export function replaceUnderHeading(body, heading, newContent) {
+  const marker = '## ' + heading;
+  const content = String(newContent == null ? '' : newContent).replace(/\s+$/, '');
+  const hIdx = body.indexOf(marker);
+  if (hIdx === -1) {
+    const sep = body.endsWith('\n') ? '' : '\n';
+    return body + sep + '\n' + marker + '\n\n' + (content ? content + '\n' : '') + '\n';
+  }
+  const after = hIdx + marker.length;
+  const rest = body.slice(after);
+  let boundary = rest.length;
+  const nextH = rest.indexOf('\n## ');
+  if (nextH !== -1) boundary = Math.min(boundary, nextH);
+  const nextDelim = rest.indexOf('\n---');
+  if (nextDelim !== -1) boundary = Math.min(boundary, nextDelim);
+  const tail = rest.slice(boundary);
+  const newSection = '\n\n' + (content ? content + '\n' : '');
+  return body.slice(0, after) + newSection + tail;
+}
+
 // SUBJECTS.md（主題台帳）から主題名一覧を抽出（`- 主題名 — 説明` の箇条書き）。
 // ファイルが無い・書式が違っても壊れない（該当行が無ければ空配列）。読み取り専用。
 export function parseSubjects(text) {
@@ -374,6 +401,28 @@ export function today() {
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
+}
+
+// ---------------------------------------------------------------------------
+// Memo（Program/Memos/・1メモ=1ファイル・プレーンテキストのみ）（v1.8）
+// ---------------------------------------------------------------------------
+
+// メモの時刻スタンプ（YYYYMMDD-HHMMSS）。ファイル名は memoFileName で 'M-' + stamp + '.md'。
+export function memoStamp(d) {
+  const t = d || new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  return '' + t.getFullYear() + p(t.getMonth() + 1) + p(t.getDate()) +
+    '-' + p(t.getHours()) + p(t.getMinutes()) + p(t.getSeconds());
+}
+export function memoFileName(d) {
+  return 'M-' + memoStamp(d) + '.md';
+}
+
+// テキストの先頭非空行（メモ一覧の表示用・カードタイルの抜粋にも流用可）。
+export function firstLine(text) {
+  if (!text) return '';
+  const lines = String(text).split('\n').map((l) => l.trim()).filter((l) => l.length > 0);
+  return lines.length ? lines[0] : '';
 }
 
 // ---------------------------------------------------------------------------

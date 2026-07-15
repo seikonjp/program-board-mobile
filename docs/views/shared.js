@@ -99,6 +99,62 @@ export function openCardDetail(ctx, card) {
   dBackdrop.hidden = false;
 }
 
+// カード編集フォーム（v1.8・ユーザー発のみ）。タイトル入力＋本文 textarea → 保存で
+// frontmatter title と「## 本文」節のみ書き換え（注釈・処理記録・他フィールドは byte 不変）。
+export function openEditCardSheet(ctx, card) {
+  ensureDetail();
+  dSheet.innerHTML = '';
+
+  const head = h('div', 'sheet-head');
+  head.appendChild(h('h2', null, 'カードを編集'));
+  const close = h('button', 'icon-btn', '×');
+  close.onclick = () => openCardDetail(ctx, card);
+  head.appendChild(close);
+  dSheet.appendChild(head);
+
+  const body = h('div', 'sheet-body');
+
+  const titleRow = h('div', 'field-row');
+  titleRow.appendChild(h('label', null, 'タイトル'));
+  const titleInput = h('input', 'field');
+  titleInput.type = 'text';
+  titleInput.value = card.title || '';
+  titleRow.appendChild(titleInput);
+  body.appendChild(titleRow);
+
+  const bodyRow = h('div', 'field-row');
+  bodyRow.appendChild(h('label', null, '本文'));
+  const bodyTa = h('textarea', 'field');
+  bodyTa.rows = 8;
+  bodyTa.value = (card.sections && card.sections.body) || '';
+  bodyRow.appendChild(bodyTa);
+  body.appendChild(bodyRow);
+
+  const actions = h('div', 'edit-actions');
+  const cancel = h('button', 'btn-secondary', 'キャンセル');
+  cancel.onclick = () => openCardDetail(ctx, card);
+  const save = h('button', 'btn-primary', '保存');
+  save.onclick = async () => {
+    save.disabled = true;
+    try {
+      await ctx.program.editCard(card.id, { title: titleInput.value, body: bodyTa.value });
+      ctx.toast('カードを保存しました');
+      await ctx.reload();
+      const updated = (ctx.state.cards || []).find((c) => c.id === card.id);
+      if (updated) openCardDetail(ctx, updated); else dBackdrop.hidden = true;
+    } catch (e) {
+      ctx.toast('保存に失敗: ' + (e.message || e));
+      save.disabled = false;
+    }
+  };
+  actions.appendChild(cancel);
+  actions.appendChild(save);
+  body.appendChild(actions);
+
+  dSheet.appendChild(body);
+  dBackdrop.hidden = false;
+}
+
 function addSection(wrap, title, content) {
   if (!content) return;
   const s = h('div', 'detail-section');
@@ -118,6 +174,13 @@ function addOperations(ctx, wrap, card) {
   const mode = P.cardOperationMode(card.direction);
   if (mode === 'none') return;
   const ops = h('div', 'detail-ops');
+
+  if (mode === 'edit') {
+    // タイトル・本文の編集（v1.8）。押すと編集フォームへ切り替わる。
+    const editBtn = h('button', 'btn-secondary op-edit', '編集');
+    editBtn.onclick = () => openEditCardSheet(ctx, card);
+    ops.appendChild(editBtn);
+  }
 
   if (mode === 'review') {
     // OK/NG トグル（どちらか一方 or 無選択・同じボタン再タップで解除）。表示のみ＝保存しない（画面内のみ）。

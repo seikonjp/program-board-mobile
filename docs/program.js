@@ -9,6 +9,9 @@ import * as P from './parser.js';
 
 const MOBILE_MARK = '（📱）'; // モバイル発の追記に付す出所マーク（INBOX / 検収記録）
 const TRASH_DIR = '_trash'; // 削除カードの退避先（Cards/_trash/・物理削除しない=復元可能）
+const MEMOS_DIR = 'Memos';  // メモ格納（Program/Memos/・1メモ=1ファイル・v1.8）
+const MEMO_DONE = '_done';  // カード化済みメモの退避先（Memos/_done/）
+const MEMO_TRASH = '_trash'; // 削除メモの退避先（Memos/_trash/・物理削除しない）
 
 const IMG_EXT = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']);
 
@@ -35,6 +38,8 @@ function join(...parts) {
 export function createProgram(dropbox, config) {
   const root = config.programRoot.replace(/\/+$/, '');
   const cardsRoot = join(root, 'Cards');
+  const memosRoot = join(root, MEMOS_DIR);
+  let memoCacheMap = new Map(); // path -> { rev, memo }（rev 一致なら再 download しない）
 
   // ---- カード読み込み（増分キャッシュ対応で軽いポーリング） ----
   // cache: Map<cardMdPath, { rev, card }>
@@ -232,6 +237,25 @@ export function createProgram(dropbox, config) {
     // 処理記録は CARD_INDEX の列に影響しないため index 再生成は不要。
   }
 
+  // ---- タイトル・本文の編集（ユーザー発・rev 競合リトライ・v1.8） ----
+  // frontmatter title と「## 本文」節のみ書き換え（注釈・処理記録の既存分・他フィールドは byte 不変）。
+  // フォルダ名（slug）はリネームしない（ID が同一性の正）。CARD_INDEX は新タイトルで再生成。
+  async function editCard(id, { title, body } = {}) {
+    const dir = await findCardDir(id);
+    if (!dir) throw new Error('カードが見つかりません: ' + id);
+    const newTitle = String(title == null ? '' : title).replace(/[\r\n]+/g, ' ').trim();
+    const newBody = body == null ? '' : String(body);
+    const mdPath = join(cardsRoot, dir, 'card.md');
+    await dropbox.updateTextFileWithRetry(mdPath, (text) => {
+      const card = P.parseCard(text);
+      if (newTitle) P.setField(card, 'title', newTitle);
+      card.body = P.replaceUnderHeading(card.body, '本文', newBody);
+      card.body = P.appendUnderHeading(card.body, '処理記録', P.buildEditLine(P.today(), '📱'));
+      return P.serializeCard(card);
+    });
+    await regenerateIndex(); // タイトルは CARD_INDEX の名称列に影響するため再生成
+  }
+
   // ---- INBOX 追記（§1 のみ・rev 競合リトライ） ----
   async function appendInbox(textLine) {
     const clean = String(textLine || '').replace(/[\r\n]+/g, ' ').trim();
@@ -241,6 +265,90 @@ export function createProgram(dropbox, config) {
     await dropbox.updateTextFileWithRetry(inboxPath, (text) => P.appendToInbox(text, entry), { createIfMissing: true });
     return entry;
   }
+
+  // ---- Memo（Program/Memos/・1メモ=1ファイル・プレーンテキストのみ・画像なし）（v1.8） ----
+  function memoNameGuard(name) {
+    if (typeof name !== 'string' || name.indexOf('/') !== -1 || name.indexOf('\\') !== -1 ||
+        name.includes('..') || !/^M-.+\.md$/.test(name)) {
+      throw new Error('不正なメモ名: ' + name);
+    }
+    return name;
+  }
+  function assertUnderMemos(p) {
+    if (p.split('/').some((s) => s === '..')) throw new Error('不正なパス（.. を含む）: ' + p);
+    if (p !== memosRoot && !p.startsWith(memosRoot + '/')) throw new Error('Memos 範囲外のパス: ' + p);
+  }
+
+  // Memos/ 直下のメモを新しい順で返す（_done/_trash はフォルダのため file 走査から自然に除外）。
+  async function loadMemos() {
+    const next = new Map();
+    let entries;
+    try {
+      entries = await dropbox.listFolder(memosRoot, { recursive: false });
+    } catch (e) {
+      if (isNotFound(e)) { memoCacheMap = next; return []; } // 未作成なら空
+      throw e;
+    }
+    const files = entries.filter((e) => e['.tag'] === 'file' && /^M-.+\.md$/.test(basename(e.path_display)));
+    const memos = [];
+    for (const ent of files) {
+      const name = basename(ent.path_display);
+      const cached = memoCacheMap.get(ent.path_display);
+      let memo;
+      if (cached && cached.rev === ent.rev) {
+        memo = cached.memo; // rev 一致 → 再 download しない
+      } else {
+        const { text } = await dropbox.download(ent.path_display);
+        memo = { name, id: name.replace(/\.md$/, ''), text, firstLine: P.firstLine(text) };
+      }
+      next.set(ent.path_display, { rev: ent.rev, memo });
+      memos.push(memo);
+    }
+    memoCacheMap = next;
+    memos.sort((a, b) => (a.name < b.name ? 1 : a.name > b.name ? -1 : 0)); // 名前=時刻順の降順＝新しい順
+    return memos;
+  }
+
+  // 新規メモ作成（add モード・同一秒衝突は連番退避で採番リトライ）。
+  async function createMemo(text) {
+    const clean = String(text == null ? '' : text);
+    if (clean.trim() === '') throw new Error('メモが空です');
+    let created = null;
+    for (let attempt = 0; attempt < 5 && !created; attempt++) {
+      const base = P.memoFileName().replace(/\.md$/, '');
+      const name = (attempt === 0 ? base : base + '-' + (attempt + 1)) + '.md';
+      const p = join(memosRoot, name);
+      try {
+        await dropbox.uploadText(p, clean, { '.tag': 'add' });
+        created = { name, id: name.replace(/\.md$/, ''), text: clean, firstLine: P.firstLine(clean) };
+      } catch (e) {
+        if (e && e.status === 409) continue; // 衝突 → 次の名前
+        throw e;
+      }
+    }
+    if (!created) throw new Error('メモ作成に失敗しました（競合）');
+    return created;
+  }
+
+  // メモ内容の更新（丸ごと上書き・rev 競合リトライ）。
+  async function updateMemo(name, text) {
+    memoNameGuard(name);
+    const clean = String(text == null ? '' : text);
+    const p = join(memosRoot, name);
+    await dropbox.updateTextFileWithRetry(p, () => clean);
+  }
+
+  // メモを _done/ または _trash/ へフォルダ移動（削除 API は使わない・移動のみ・物理削除しない）。
+  async function moveMemoTo(name, dest) {
+    memoNameGuard(name);
+    const from = join(memosRoot, name);
+    const to = join(memosRoot, dest, name);
+    assertUnderMemos(from);
+    assertUnderMemos(to);
+    await dropbox.move(from, to); // 衝突時は Dropbox 側で退避名（autorename）
+  }
+  function doneMemo(name) { return moveMemoTo(name, MEMO_DONE); }
+  function trashMemo(name) { return moveMemoTo(name, MEMO_TRASH); }
 
   // ---- 読み取り専用ビュー ----
   async function readText(relPath) {
@@ -294,7 +402,13 @@ export function createProgram(dropbox, config) {
     updateCard,
     deleteCard,
     addComment,
+    editCard,
     appendInbox,
+    loadMemos,
+    createMemo,
+    updateMemo,
+    doneMemo,
+    trashMemo,
     readDecisionQueue,
     readControl,
     readSubjects,

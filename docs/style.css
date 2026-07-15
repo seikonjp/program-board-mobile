@@ -254,15 +254,21 @@ textarea.field { min-height: 84px; resize: vertical; }
 .tray-actions { margin-top: 8px; }
 .tray-btn-row { display: flex; gap: 8px; margin-top: 8px; }
 
-/* ---- クイック登録 ---- */
-.quick-form { display: flex; flex-direction: column; gap: 10px; }
-.quick-recent-head { font-size: 14px; color: var(--ink-soft); margin-top: 20px; }
-.quick-recent { list-style: none; padding: 0; margin: 0; }
-.quick-recent li {
+/* ---- Memo（v1.8） ---- */
+.memo-view .btn-big { margin: 6px 0 12px; }
+.memo-list { display: flex; flex-direction: column; gap: 8px; }
+.memo-item {
   background: var(--surface); border: 1px solid var(--line);
-  border-radius: 8px; padding: 8px 10px; margin-bottom: 6px;
-  font-size: 14px; word-break: break-word;
+  border-radius: var(--radius); padding: 10px 12px; cursor: pointer;
 }
+.memo-first { font-size: 15px; color: var(--ink); word-break: break-word; }
+.memo-id {
+  font-size: 11px; color: var(--ink-soft); margin-top: 4px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
+.edit-actions { display: flex; gap: 8px; margin-top: 12px; }
+.edit-actions .btn-primary, .edit-actions .btn-secondary { flex: 1; }
+.memo-del { width: 100%; margin-top: 10px; }
 
 /* ---- 種別セグメント（新規カード） ---- */
 .type-segment { display: flex; gap: 6px; }

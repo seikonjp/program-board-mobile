@@ -18,6 +18,7 @@ let activeSegment = 'reference'; // 狭幅で表示する列（種類）
 let newType = 'reference';    // 新規カードの種別セグメント（既定=Reference）
 let subjectsFromLedger = [];  // SUBJECTS.md の主題名（サジェスト用・一度だけ取得）
 let subjectsFetched = false;
+let pendingOnCreated = null;  // メモ由来のカード作成成功時コールバック（元メモを _done へ・v1.8）
 
 function create(ctx) {
   root = h('div', 'board');
@@ -36,12 +37,22 @@ function create(ctx) {
   });
   const photoBtn = h('button', 'btn-primary btn-big', '📷 写真を選ぶ');
   photoBtn.onclick = () => fileInput.click();
-  const textBtn = h('button', 'btn-secondary', '＋ テキストで作成');
-  textBtn.onclick = () => { clearPending(); openNewCard(ctx); };
+  const textBtn = h('button', 'btn-secondary', '＋ カード');
+  textBtn.onclick = () => { pendingOnCreated = null; clearPending(); openNewCard(ctx); };
+  const memoBtn = h('button', 'btn-secondary', '＋ メモ');
+  memoBtn.onclick = () => {
+    if (ctx.setTab) ctx.setTab('memo'); // 新規メモ入力は Memo ビュー内（表示してから開く）
+    if (ctx.requestNewMemo) ctx.requestNewMemo();
+    else ctx.toast('メモタブから追加できます');
+  };
   bar.appendChild(photoBtn);
   bar.appendChild(textBtn);
+  bar.appendChild(memoBtn);
   bar.appendChild(fileInput);
   root.appendChild(bar);
+
+  // 他ビュー（メモのカード化）から本文プリフィル付きで新規カードを開くためのフック（v1.8）。
+  ctx.requestNewCard = (opts) => requestNewCard(ctx, opts);
 
   // セグメント（狭幅のみ表示・種類別・タップで1列を選ぶ）
   const seg = h('div', 'board-segments');
@@ -208,6 +219,18 @@ function openNewCard(ctx) {
 }
 function closeNew() {
   document.getElementById('new-backdrop').hidden = true;
+  pendingOnCreated = null; // キャンセル時はメモ変換状態も解除
+}
+
+// 本文プリフィル付きで新規カードフォームを開く（メモのカード化・v1.8）。
+// opts.onCreated は作成成功後に呼ぶ（元メモを _done へ移す等）。
+function requestNewCard(ctx, opts) {
+  const o = opts || {};
+  clearPending();
+  pendingOnCreated = o.onCreated || null;
+  openNewCard(ctx);
+  if (o.body != null) { const b = document.getElementById('new-body'); if (b) b.value = o.body; }
+  if (o.type) { newType = o.type; syncTypeSegment(); }
 }
 
 function syncTypeSegment() {
@@ -287,10 +310,13 @@ async function submitNew(ctx, submitBtn) {
   try {
     const images = await ctx.prepareImages(pendingFiles);
     await ctx.program.createCard({ title: title || '（無題）', body, type, direction, subject, images }, ctx.state.cardDirs);
+    const cb = pendingOnCreated; // メモ由来なら作成成功後に元メモを _done へ
+    pendingOnCreated = null;
     clearPending();
     closeNew();
     ctx.toast('カードを作成しました');
     await ctx.reload();
+    if (cb) { try { await cb(); } catch (e) { ctx.toast('メモの移動に失敗: ' + (e.message || e)); } }
   } catch (e) {
     ctx.toast('作成に失敗: ' + (e.message || e));
   } finally {

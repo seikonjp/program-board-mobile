@@ -16,7 +16,7 @@ export const config = {
   // Mac 版と同じ実ファイルを見る（二重の正なし）。設定画面で上書き可。
   programRoot: '/ArchPlan/Program',
 
-  // 起動時に開くタブ（board / reference / knowledge / consult / decision / report / tray / quick）。設定画面で上書き可。
+  // 起動時に開くタブ（board / reference / knowledge / consult / decision / report / tray / memo）。設定画面で上書き可。
   defaultTab: 'board',
 
   // 画面表示中の自動ポーリング間隔（ms）。モバイル通信量に配慮した軽いポーリング。
@@ -28,7 +28,7 @@ export const config = {
   // ビュー有効化リスト（登録制）。
   // 将来ビューを増やすときは docs/views/<id>.js を追加し、ここに 1 行足すだけで有効化できる
   //（app.js など既存コードを編集しない設計）。
-  // タブ表示順（v1.4）: Board / Reference / Knowledge / Consult / Decision / Report / Acceptance(=tray) / Quick。
+  // タブ表示順（v1.8）: Board / Reference / Knowledge / Consult / Decision / Report / Acceptance(=tray) / Memo。
   views: [
     { id: 'board', enabled: true },
     { id: 'reference', enabled: true },
@@ -37,7 +37,7 @@ export const config = {
     { id: 'decision', enabled: true },
     { id: 'report', enabled: true },
     { id: 'tray', enabled: true },
-    { id: 'quick', enabled: true },
+    { id: 'memo', enabled: true },
     // 将来の開発特化ビュー（v1 では作らない・enabled:false のまま置ける）:
     // { id: 'progress', enabled: false },   // STAGE_PLAN.md の `- [ ]` 進捗を parser.js で解析
     // { id: 'control',  enabled: false },   // CONTROL ダッシュボード

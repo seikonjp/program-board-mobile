@@ -482,6 +482,13 @@ async function boot() {
     buildTabbar();
   } catch (e) { flowLog('タブ構築で例外: ' + (e && e.message || e)); }
 
+  // メモ↔カードの相互フック（requestNewCard / requestNewMemo）と setTab を確実に配線するため、
+  // Board と Memo は起動時に生成しておく（隠し要素として存在・タブ表示は別・v1.8）。
+  ctx.setTab = (id) => setTab(id);
+  for (const id of ['board', 'memo']) {
+    if (getView(id)) { try { ensureCreated(id); } catch (e) { flowLog('ビュー生成で例外: ' + id + ' ' + (e && e.message || e)); } }
+  }
+
   if (dropbox.isConnected()) {
     if (justConnected) flowLog('接続済み判定→ボード表示へ');
     hideConnectOverlay();
