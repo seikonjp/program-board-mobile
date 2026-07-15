@@ -212,7 +212,9 @@ async function refresh(opts) {
   refreshing = true;
   try {
     setSync('同期中…');
+    if (!quiet) flowLog('同期開始（一覧取得）');
     const { cards, cache, cardDirs } = await program.loadCards(cardCache);
+    if (!quiet) flowLog('同期成功: カード' + cards.length + '件');
     cardCache = cache;
     ctx.state.cards = cards;
     ctx.state.cardDirs = cardDirs;
@@ -230,6 +232,7 @@ async function refresh(opts) {
     else if (msg.includes('not_found')) hint = '→ 設定の「Programルートパス」がDropbox上の実際の場所と一致しているか確認してください（既定 /ArchPlan/Program）';
     else if (msg.includes('invalid_access_token') || msg.includes('401')) hint = '→ 設定から「切断」→ 再接続してください';
     setSync('⚠ 同期エラー: ' + msg + ' ' + hint);
+    if (!quiet) flowLog('同期失敗: ' + msg);
     if (!quiet) toast('同期エラー: ' + msg);
     if (ctx.state.cards.length === 0) {
       const cached = loadPersistedCache();
@@ -462,19 +465,25 @@ async function boot() {
   const justConnected = await handleRedirect();
 
   // 有効ビューを動的 import（各モジュールが registerView で自己登録）。
+  let vOk = 0, vNg = [];
   for (const id of enabledViewIds()) {
-    try { await import('./views/' + id + '.js'); }
-    catch (e) { console.error('ビュー読込失敗: ' + id, e); }
+    try { await import('./views/' + id + '.js'); vOk++; }
+    catch (e) { vNg.push(id + ':' + (e && e.message || e)); console.error('ビュー読込失敗: ' + id, e); }
   }
-  buildTabbar();
+  if (justConnected || vNg.length) flowLog('ビュー読込 ' + vOk + '/' + enabledViewIds().length + (vNg.length ? ' 失敗=' + vNg.join('; ') : ''));
+  try {
+    buildTabbar();
+  } catch (e) { flowLog('タブ構築で例外: ' + (e && e.message || e)); }
 
   if (dropbox.isConnected()) {
+    if (justConnected) flowLog('接続済み判定→ボード表示へ');
     hideConnectOverlay();
     ctx.state.connected = true;
-    setTab(config.defaultTab);
+    try { setTab(config.defaultTab); } catch (e) { flowLog('タブ表示で例外: ' + (e && e.message || e)); }
     await refresh({ quiet: !justConnected });
     startPolling();
   } else {
+    if (justConnected) flowLog('⚠交換成功なのに未接続判定（refresh鍵の保持失敗）→接続画面へ');
     showConnectOverlay();
     // タブ自体は構築済みだが操作は接続後。
   }
