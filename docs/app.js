@@ -266,6 +266,23 @@ function stopPolling() { if (pollTimer) { clearInterval(pollTimer); pollTimer = 
 function redirectUri() { return location.origin + location.pathname; }
 function cleanUrl() { history.replaceState({}, '', location.pathname); }
 
+const LOG_KEY = 'pbm_flow_log';
+function flowLog(msg) {
+  let arr = [];
+  try { arr = JSON.parse(localStorage.getItem(LOG_KEY) || '[]'); } catch { arr = []; }
+  arr.push(new Date().toLocaleTimeString('ja-JP') + ' ' + msg);
+  if (arr.length > 30) arr = arr.slice(-30);
+  try { localStorage.setItem(LOG_KEY, JSON.stringify(arr)); } catch { /* noop */ }
+  renderFlowLog();
+}
+function renderFlowLog() {
+  const el = $('#diag-out');
+  if (!el) return;
+  let arr = [];
+  try { arr = JSON.parse(localStorage.getItem(LOG_KEY) || '[]'); } catch { arr = []; }
+  if (arr.length) el.textContent = '― 接続ログ ―\n' + arr.join('\n');
+}
+
 async function runDiagnostics() {
   const out = $('#diag-out');
   const lines = [];
@@ -304,10 +321,15 @@ async function startConnect() {
     $('#connect-hint').textContent = 'docs/config.js の dropboxClientId が未設定です。';
     return;
   }
-  const verifier = generateCodeVerifier();
-  const challenge = await codeChallengeFromVerifier(verifier);
-  const state = randomState();
+  flowLog('接続開始');
+  let verifier, challenge, state;
+  try {
+    verifier = generateCodeVerifier();
+    challenge = await codeChallengeFromVerifier(verifier);
+    state = randomState();
+  } catch (e) { flowLog('鍵生成に失敗: ' + (e && e.message || e)); toast('鍵生成に失敗'); return; }
   stashPkce({ verifier, state });
+  flowLog('一時鍵を保存→Dropbox認可画面へ移動');
   location.href = buildAuthorizeUrl({
     clientId: config.dropboxClientId,
     redirectUri: redirectUri(),
@@ -321,10 +343,13 @@ async function handleRedirect() {
   const code = params.get('code');
   const state = params.get('state');
   const err = params.get('error');
-  if (err) { cleanUrl(); toast('認可がキャンセルされました'); return false; }
+  if (err) { cleanUrl(); flowLog('認可キャンセル/拒否: ' + err); toast('認可がキャンセルされました'); return false; }
   if (!code) return false;
+  flowLog('Dropboxから戻り（code受領）');
   const pk = takePkce();
-  if (!pk || pk.state !== state) { cleanUrl(); toast('認可の検証に失敗（state 不一致）'); return false; }
+  if (!pk) { cleanUrl(); flowLog('失敗: 一時鍵が見つからない（保存領域が移動中に消えた）'); toast('認可の検証に失敗（一時鍵消失）'); return false; }
+  if (pk.state !== state) { cleanUrl(); flowLog('失敗: state不一致'); toast('認可の検証に失敗（state 不一致）'); return false; }
+  flowLog('一時鍵OK→トークン交換を開始');
   try {
     const tokens = await exchangeCodeForTokens({
       clientId: config.dropboxClientId,
@@ -332,12 +357,14 @@ async function handleRedirect() {
       verifier: pk.verifier,
       redirectUri: redirectUri(),
     });
+    flowLog('トークン交換成功→保存');
     saveTokens(tokens);
     dropbox.setTokens(tokens);
     cleanUrl();
     return true;
   } catch (e) {
     cleanUrl();
+    flowLog('失敗: トークン交換 ' + (e && e.message || e) + (e && e.status ? '［HTTP ' + e.status + '］' : ''));
     toast('接続に失敗: ' + (e.message || e));
     return false;
   }
@@ -418,6 +445,7 @@ async function boot() {
   wire();
   setOffline(!navigator.onLine);
 
+  renderFlowLog();
   const justConnected = await handleRedirect();
 
   // 有効ビューを動的 import（各モジュールが registerView で自己登録）。

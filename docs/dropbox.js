@@ -80,11 +80,14 @@ export function clearTokens() {
 
 // PKCE 一時値（verifier / state）は認可リダイレクトをまたぐため localStorage に一時保持。
 export function stashPkce(v) {
-  localStorage.setItem(PKCE_KEY, JSON.stringify(v));
+  const raw = JSON.stringify(v);
+  try { localStorage.setItem(PKCE_KEY, raw); } catch { /* private等 */ }
+  try { sessionStorage.setItem(PKCE_KEY, raw); } catch { /* private等 */ }
 }
 export function takePkce() {
-  const raw = localStorage.getItem(PKCE_KEY);
-  localStorage.removeItem(PKCE_KEY);
+  const raw = localStorage.getItem(PKCE_KEY) || sessionStorage.getItem(PKCE_KEY);
+  try { localStorage.removeItem(PKCE_KEY); } catch { /* noop */ }
+  try { sessionStorage.removeItem(PKCE_KEY); } catch { /* noop */ }
   try { return JSON.parse(raw || 'null'); } catch { return null; }
 }
 
