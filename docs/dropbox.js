@@ -219,7 +219,10 @@ export function createDropboxClient({ clientId, fetchImpl, tokens, onTokensChang
     const text = await res.text();
     let json = null;
     try { json = text ? JSON.parse(text) : null; } catch { json = text; }
-    if (!res.ok) throw new DropboxError('RPC 失敗: ' + endpoint, res.status, json);
+    if (!res.ok) {
+      const summary = json && typeof json === 'object' && json.error_summary ? json.error_summary : '';
+      throw new DropboxError('RPC 失敗: ' + endpoint + (summary ? '（' + summary + '）' : '') + '［HTTP ' + res.status + '］', res.status, json);
+    }
     return json;
   }
 

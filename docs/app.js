@@ -224,8 +224,13 @@ async function refresh(opts) {
   } catch (e) {
     ctx.state.online = false;
     setOffline(true);
-    setSync('オフライン（最終取得を表示）');
-    if (!quiet) toast('同期エラー: ' + (e.message || e));
+    const msg = String(e && e.message || e);
+    let hint = '';
+    if (msg.includes('missing_scope')) hint = '→ Dropbox App設定のPermissionsで4項目にチェックし「Submit」→ このアプリの設定から「切断」→ 再接続してください';
+    else if (msg.includes('not_found')) hint = '→ 設定の「Programルートパス」がDropbox上の実際の場所と一致しているか確認してください（既定 /ArchPlan/Program）';
+    else if (msg.includes('invalid_access_token') || msg.includes('401')) hint = '→ 設定から「切断」→ 再接続してください';
+    setSync('⚠ 同期エラー: ' + msg + ' ' + hint);
+    if (!quiet) toast('同期エラー: ' + msg);
     if (ctx.state.cards.length === 0) {
       const cached = loadPersistedCache();
       if (cached) { ctx.state.cards = cached; notifyData(); }
