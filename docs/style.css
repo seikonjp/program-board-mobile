@@ -188,7 +188,9 @@ textarea.field { min-height: 84px; resize: vertical; }
 }
 .segment.is-active { background: var(--brand); color: #fff; border-color: var(--brand); }
 
+/* 狭幅: セグメントで選んだ種類の1列のみ表示（従来のセグメント切替）。 */
 .column { margin-bottom: 8px; }
+.board-columns .column:not(.is-active) { display: none; }
 .column-head { display: flex; align-items: center; gap: 8px; padding: 6px 2px; }
 .column-title { font-weight: 700; font-size: 15px; }
 .column-count {
@@ -226,6 +228,7 @@ textarea.field { min-height: 84px; resize: vertical; }
   background: #eef0f4; border-radius: 6px; padding: 2px 6px;
 }
 .chip-id { background: var(--brand); color: #fff; font-weight: 600; }
+.chip-status { background: #e2e7ef; color: #33405a; font-weight: 600; }
 
 .img-lazy { background: #eef0f4; }
 .img-error { background: #f6e6e6; }
@@ -378,11 +381,13 @@ textarea.field { min-height: 84px; resize: vertical; }
   .board-segments { display: none; }
   .board-columns {
     display: grid;
-    grid-template-columns: repeat(5, 1fr);
+    grid-template-columns: repeat(6, 1fr);
     gap: 12px;
     align-items: start;
   }
   .board-columns .column { margin-bottom: 0; }
+  /* 広幅は全列表示（狭幅の1列選択を打ち消す）。 */
+  .board-columns .column:not(.is-active) { display: block; }
   .card-tile { flex-direction: column; }
   .card-thumb { width: 100%; height: 120px; flex: none; }
 

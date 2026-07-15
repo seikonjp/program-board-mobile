@@ -12,13 +12,25 @@
 
 export const STATUS_ORDER = ['new', 'annotated', 'waiting', 'acceptance', 'consumed'];
 
-// 分類語彙は英語表示（v1.3）。値そのものが英語のため恒等写像だが、将来の別名に備え表で持つ。
+// 状態(status)は表示のみ日本語化（v1.6）。ファイル内部の値は英語のまま（frontmatter は不変）。
+// UI のタイル/詳細 chip と CARD_INDEX の状態列がこの日本語ラベルを使う。type/direction は英語のまま。
 export const STATUS_LABEL = {
-  new: 'new',
-  annotated: 'annotated',
-  waiting: 'waiting',
-  acceptance: 'acceptance',
-  consumed: 'consumed',
+  new: '新規',
+  annotated: '注釈済み',
+  waiting: '浮上待ち',
+  acceptance: '検収待ち',
+  consumed: '消化',
+};
+
+// Board の列は種類(type)別（v1.6）。この6種・この順（タブ名と同形の英語見出し）。
+export const BOARD_COLUMN_ORDER = ['reference', 'knowledge', 'consult', 'decision', 'report', 'acceptance'];
+export const BOARD_COLUMN_LABEL = {
+  reference: 'Reference',
+  knowledge: 'Knowledge',
+  consult: 'Consult',
+  decision: 'Decision',
+  report: 'Report',
+  acceptance: 'Acceptance',
 };
 
 export const DIRECTION_LABEL = {
@@ -53,6 +65,16 @@ export function typeLabel(t) {
 // type 別タブ（reference/knowledge/consult）へ出すカードを抽出。request は consult 扱い。
 export function cardsForType(cards, type) {
   return (cards || []).filter((c) => normalizeType(c.type) === type);
+}
+
+// Board の列を種類(type)別にグルーピング（v1.6）。6列この順・request は consult 列へ合流・
+// 6種以外（template 等）はどの列にも入らない。各カードのタイルには日本語状態 chip を出す。
+export function boardColumns(cards) {
+  return BOARD_COLUMN_ORDER.map((type) => ({
+    type,
+    label: BOARD_COLUMN_LABEL[type],
+    cards: cardsForType(cards, type),
+  }));
 }
 
 // ---------------------------------------------------------------------------

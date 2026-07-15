@@ -14,7 +14,8 @@ export function h(tag, cls, text) {
 }
 
 // 一覧タイル（全 type 統一）: サムネイル（画像があれば先頭1枚・なければ出さない）＋タイトル＋chip列。
-// opts.showType=true のとき type chip を出す（Board=全 type 混在のため付与／単一 type タブでは不要）。
+// opts.showType=true のとき type chip を出す（種類が列で分からないタブで付与）。
+// 状態(status) chip（日本語）は全タブのタイルに常に出す（v1.6）。
 export function cardTile(ctx, card, opts) {
   const o = opts || {};
   const t = h('div', 'card-tile');
@@ -29,6 +30,7 @@ export function cardTile(ctx, card, opts) {
   const meta = h('div', 'card-meta');
   meta.appendChild(h('span', 'chip chip-id', card.id));
   if (o.showType && card.type) meta.appendChild(h('span', 'chip', P.typeLabel(card.type)));
+  if (card.status) meta.appendChild(h('span', 'chip chip-status', P.STATUS_LABEL[card.status] || card.status));
   if (card.subject) meta.appendChild(h('span', 'chip', '主題: ' + card.subject));
   body.appendChild(meta);
   t.appendChild(body);
@@ -71,7 +73,7 @@ export function openCardDetail(ctx, card) {
   if (card.type) meta.appendChild(h('span', 'chip', P.typeLabel(card.type)));
   if (card.subject) meta.appendChild(h('span', 'chip', '主題: ' + card.subject));
   (card.tags || []).forEach((tag) => meta.appendChild(h('span', 'chip', '#' + tag)));
-  if (card.status) meta.appendChild(h('span', 'chip', P.STATUS_LABEL[card.status] || card.status));
+  if (card.status) meta.appendChild(h('span', 'chip chip-status', P.STATUS_LABEL[card.status] || card.status));
   if (card.surface) meta.appendChild(h('span', 'chip', '浮上: ' + card.surface));
   body.appendChild(meta);
 

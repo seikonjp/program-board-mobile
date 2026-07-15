@@ -1,20 +1,20 @@
 'use strict';
 
-// views/board.js — Board（状態5列）。狭幅=セグメント切替の縦1カラム／広幅=カンバン。
-// 全 type を表示（v1.3。knowledge 除外は撤廃）。カードは type chip を出す。
+// views/board.js — Board（種類6列・v1.6）。狭幅=セグメント切替で1列を選ぶ／広幅=カンバン。
+// 列=Reference/Knowledge/Consult/Decision/Report/Acceptance（種類別・parser.js の boardColumns）。
+// カードのタイルには日本語の状態(status) chip を出す（種類は列で分かるため type chip は付けない）。
 // 一覧タイル・詳細シートは shared.js を共有（全 type 統一書式）。
 // モバイルの主動線＝「写真を選ぶ」→カード作成。
 
 import { registerView } from '../registry.js';
 import { h, cardTile, openCardDetail } from './shared.js';
-
-const STATUS_ORDER = ['new', 'annotated', 'waiting', 'acceptance', 'consumed'];
+import * as P from '../parser.js';
 
 let root;              // ビュー要素
 let columnsWrap;       // #board-columns
 let pendingFiles = []; // 新規カードに添付する File[]
 let pendingUrls = [];  // プレビュー用 objectURL
-let activeSegment = 'new';
+let activeSegment = 'reference'; // 狭幅で表示する列（種類）
 let newType = 'reference';    // 新規カードの種別セグメント（既定=Reference）
 let subjectsFromLedger = [];  // SUBJECTS.md の主題名（サジェスト用・一度だけ取得）
 let subjectsFetched = false;
@@ -43,21 +43,20 @@ function create(ctx) {
   bar.appendChild(fileInput);
   root.appendChild(bar);
 
-  // セグメント（狭幅のみ表示）
+  // セグメント（狭幅のみ表示・種類別・タップで1列を選ぶ）
   const seg = h('div', 'board-segments');
   seg.id = 'board-segments';
-  STATUS_ORDER.forEach((s) => {
-    const b = h('button', 'segment', ctx.constants.STATUS_LABEL[s]);
-    b.dataset.status = s;
-    b.onclick = () => { activeSegment = s; syncSegments(ctx); };
+  P.BOARD_COLUMN_ORDER.forEach((type) => {
+    const b = h('button', 'segment', P.BOARD_COLUMN_LABEL[type]);
+    b.dataset.type = type;
+    b.onclick = () => { activeSegment = type; syncSegments(ctx); };
     seg.appendChild(b);
   });
   root.appendChild(seg);
 
-  // カラム
+  // カラム（種類別）
   columnsWrap = h('div', 'board-columns');
   columnsWrap.id = 'board-columns';
-  columnsWrap.dataset.active = activeSegment;
   root.appendChild(columnsWrap);
 
   // 新規カードモーダルを内包（詳細シートは shared.js のグローバル）
@@ -76,35 +75,32 @@ function onShow(ctx) {
 }
 
 function syncSegments(ctx) {
-  columnsWrap.dataset.active = activeSegment;
   const seg = document.getElementById('board-segments');
-  if (!seg) return;
-  for (const b of seg.children) {
-    b.classList.toggle('is-active', b.dataset.status === activeSegment);
+  if (seg) {
+    for (const b of seg.children) b.classList.toggle('is-active', b.dataset.type === activeSegment);
+  }
+  // 狭幅では選んだ種類の列のみ表示（.is-active）。広幅は CSS で全列表示に戻す。
+  if (columnsWrap) {
+    for (const col of columnsWrap.children) col.classList.toggle('is-active', col.dataset.type === activeSegment);
   }
 }
 
 function renderColumns(ctx) {
-  // 全 type を状態別カンバンに配置（v1.3。knowledge も含む）。
+  // 種類(type)別6列（v1.6・parser.js の boardColumns）。列見出しが種類を表す。
   const cards = ctx.state.cards || [];
   columnsWrap.innerHTML = '';
-  const byStatus = {};
-  STATUS_ORDER.forEach((s) => (byStatus[s] = []));
-  cards.forEach((c) => {
-    const s = STATUS_ORDER.includes(c.status) ? c.status : 'new';
-    byStatus[s].push(c);
-  });
-  STATUS_ORDER.forEach((s) => {
+  P.boardColumns(cards).forEach((g) => {
     const col = h('div', 'column');
-    col.dataset.status = s;
+    col.dataset.type = g.type;
     const head = h('div', 'column-head');
-    head.appendChild(h('span', 'column-title', ctx.constants.STATUS_LABEL[s]));
-    head.appendChild(h('span', 'column-count', String(byStatus[s].length)));
+    head.appendChild(h('span', 'column-title', g.label));
+    head.appendChild(h('span', 'column-count', String(g.cards.length)));
     col.appendChild(head);
-    if (byStatus[s].length === 0) {
+    if (g.cards.length === 0) {
       col.appendChild(h('p', 'column-empty', '（なし）'));
     }
-    byStatus[s].forEach((c) => col.appendChild(cardTile(ctx, c, { showType: true })));
+    // 列=種類のため type chip は付けない。タイルには日本語の状態 chip が出る（shared.js）。
+    g.cards.forEach((c) => col.appendChild(cardTile(ctx, c, { showType: false })));
     columnsWrap.appendChild(col);
   });
 }
