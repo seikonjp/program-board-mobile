@@ -266,6 +266,38 @@ function stopPolling() { if (pollTimer) { clearInterval(pollTimer); pollTimer = 
 function redirectUri() { return location.origin + location.pathname; }
 function cleanUrl() { history.replaceState({}, '', location.pathname); }
 
+async function runDiagnostics() {
+  const out = $('#diag-out');
+  const lines = [];
+  const show = () => { out.textContent = lines.join('\n'); };
+  const probe = async (label, fn) => {
+    try {
+      const res = await fn();
+      lines.push('OK ' + label + ' -> HTTP ' + res.status);
+    } catch (e) {
+      lines.push('NG ' + label + ' -> ' + (e && e.message || e));
+    }
+    show();
+  };
+  lines.push('環境: ' + (navigator.standalone ? 'ホーム画面アプリ' : 'ブラウザ') + ' / online=' + navigator.onLine);
+  lines.push('トークン保持: ' + (dropbox.isConnected() ? 'あり' : 'なし'));
+  show();
+  await probe('(1) GET api到達', () => fetch('https://api.dropboxapi.com/oauth2/token', { method: 'GET' }));
+  await probe('(2) POST token単純', () => fetch('https://api.dropboxapi.com/oauth2/token', {
+    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: 'grant_type=authorization_code&code=diag&client_id=' + encodeURIComponent(config.dropboxClientId),
+  }));
+  await probe('(3) POST list_folderプリフライト', () => fetch('https://api.dropboxapi.com/2/files/list_folder', {
+    method: 'POST', headers: { Authorization: 'Bearer diag', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: '' }),
+  }));
+  await probe('(4) POST contentホスト', () => fetch('https://content.dropboxapi.com/2/files/download', {
+    method: 'POST', headers: { Authorization: 'Bearer diag', 'Dropbox-API-Arg': '{"path":"/diag"}' },
+  }));
+  lines.push('注: HTTP 4xxは「届いている」=正常。NGだけが異常。');
+  show();
+}
+
 async function startConnect() {
   if (!config.dropboxClientId || config.dropboxClientId.includes('PUT_YOUR')) {
     toast('config.js に Dropbox App key を設定してください');
@@ -368,6 +400,7 @@ function wire() {
   $('#settings-close').onclick = closeSettings;
   $('#settings-backdrop').addEventListener('click', (e) => { if (e.target.id === 'settings-backdrop') closeSettings(); });
   $('#btn-connect').onclick = startConnect;
+  const bd = $('#btn-diag'); if (bd) bd.onclick = () => { void runDiagnostics(); };
   $('#btn-connect2').onclick = startConnect;
   $('#btn-disconnect').onclick = disconnect;
   $('#btn-save-settings').onclick = saveSettings;
