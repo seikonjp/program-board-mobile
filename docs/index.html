@@ -1,0 +1,73 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="theme-color" content="#3b4a6b">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Program">
+<link rel="manifest" href="./manifest.json">
+<link rel="apple-touch-icon" href="./icons/icon-192.png">
+<link rel="stylesheet" href="./style.css">
+<title>Program Board Mobile</title>
+
+<header class="app-header">
+  <div class="brand">Program <span class="sub">Board</span></div>
+  <div class="header-actions">
+    <span id="offline-indicator" class="pill pill-offline" hidden>オフライン</span>
+    <button id="btn-refresh" class="icon-btn" aria-label="更新">⟳</button>
+    <button id="btn-settings" class="icon-btn" aria-label="設定">⚙</button>
+  </div>
+</header>
+
+<div id="sync-note" class="sync-note"></div>
+
+<main id="view-host" class="view-host"></main>
+
+<nav id="tabbar" class="tabbar" aria-label="タブ"></nav>
+
+<!-- 未接続オーバーレイ -->
+<div id="connect-overlay" class="overlay" hidden>
+  <div class="overlay-card">
+    <h1>Program Board Mobile</h1>
+    <p>iPhone / iPad から Dropbox 上の Program を直接読み書きします。<br>まず Dropbox に接続してください。</p>
+    <button id="btn-connect" class="btn-primary btn-big">Dropbox に接続</button>
+    <p id="connect-hint" class="hint"></p>
+  </div>
+</div>
+
+<!-- 設定モーダル -->
+<div id="settings-backdrop" class="backdrop" hidden>
+  <div class="sheet">
+    <div class="sheet-head">
+      <h2>設定</h2>
+      <button id="settings-close" class="icon-btn" aria-label="閉じる">×</button>
+    </div>
+    <div class="sheet-body">
+      <section class="setting-row">
+        <label>Dropbox 接続</label>
+        <div id="conn-status" class="conn-status">未接続</div>
+        <div class="setting-actions">
+          <button id="btn-connect2" class="btn-primary">接続</button>
+          <button id="btn-disconnect" class="btn-secondary">切断</button>
+        </div>
+      </section>
+      <section class="setting-row">
+        <label for="cfg-root">Program ルートパス</label>
+        <input id="cfg-root" type="text" inputmode="url" placeholder="/ArchPlan/Program">
+        <p class="hint">Dropbox 上の絶対パス。Mac 版と同じフォルダを指す。</p>
+      </section>
+      <section class="setting-row">
+        <label for="cfg-tab">起動時に開くタブ</label>
+        <select id="cfg-tab"></select>
+      </section>
+      <section class="setting-row">
+        <button id="btn-save-settings" class="btn-primary btn-big">保存</button>
+      </section>
+      <p class="hint">トークンとデータはこの端末の localStorage にのみ保存されます（外部送信なし）。</p>
+    </div>
+  </div>
+</div>
+
+<!-- トースト -->
+<div id="toast" class="toast" hidden></div>
+
+<script type="module" src="./app.js"></script>

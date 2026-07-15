@@ -1,0 +1,16 @@
+{
+  "name": "Program Board Mobile",
+  "short_name": "Program",
+  "description": "iPhone/iPad から Dropbox 上の Program を直接読み書きするボード",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f4f5f8",
+  "theme_color": "#3b4a6b",
+  "lang": "ja",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
