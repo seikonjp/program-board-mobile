@@ -10,7 +10,7 @@
 // 表示ラベル（純粋データ・UI/索引で共用）
 // ---------------------------------------------------------------------------
 
-export const STATUS_ORDER = ['new', 'annotated', 'waiting', 'review', 'consumed'];
+export const STATUS_ORDER = ['new', 'annotated', 'waiting', 'review', 'responded', 'done-proposed', 'consumed'];
 
 // 状態(status)は表示のみ日本語化（v1.6）。ファイル内部の値は英語のまま（frontmatter は不変）。
 // UI のタイル/詳細 chip と CARD_INDEX の状態列がこの日本語ラベルを使う。type/direction は英語のまま。
@@ -19,6 +19,8 @@ export const STATUS_LABEL = {
   annotated: '注釈済み',
   waiting: '浮上待ち',
   review: '検収待ち',
+  responded: '応答済み',    // decision の選択済み（v2.1・統括の伝播待ち）
+  'done-proposed': '完了提案', // 完了提案（v2.1・ユーザーの完了確定待ち）
   consumed: '消化',
 };
 
@@ -61,8 +63,8 @@ export function normalizeType(t) {
 // ---------------------------------------------------------------------------
 
 // カード詳細画面に出す操作の種類を direction から決める（v1.7）。一覧タイルには出さない。
-//   'edit'   = ユーザー発（user-to-claude）: 削除＋コメント追記（即動作）
-//   'respond' = AI発（claude-to-user）: OK/NG トグル（表示のみ）＋コメント（準備中）
+//   'edit'   = ユーザー発（user-to-claude）: 編集＋コメント追記（即動作）＋削除
+//   'respond' = AI発（claude-to-user）: OK/NG/あとで・選択肢（decision）・コメント（応答をファイルへ・v2.1）
 //   'none'   = 方向不明: 操作を出さない
 export function cardOperationMode(direction) {
   if (direction === 'user-to-claude') return 'edit';
@@ -79,6 +81,66 @@ export function buildCommentLine(date, text, mark) {
 // 本文/タイトル編集の処理記録行を生成（v1.8）。mark は 📱（モバイル）/ 💻（Mac）。
 export function buildEditLine(date, mark) {
   return '- ↳ ' + date + ' 本文/タイトル編集（あなた・' + mark + '）';
+}
+
+// 応答行の日時スタンプ（YYYY-MM-DD HH:MM・端末ローカル時刻）（v2.1）。
+export function nowStamp(d) {
+  const t = d || new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  return t.getFullYear() + '-' + p(t.getMonth() + 1) + '-' + p(t.getDate()) +
+    ' ' + p(t.getHours()) + ':' + p(t.getMinutes());
+}
+
+// AI発カードへの応答行を生成（統括AIがparseする固定書式・Mac版と同一・v2.1）。mark=📱（モバイル）/💻（Mac）。
+//   kind: 'ok' | 'ng' | 'later' | 'choice' | 'comment'
+export function buildResponseLine(datetime, mark, kind, opts) {
+  const o = opts || {};
+  const head = '- 応答（あなた・' + mark + ' ' + datetime + '）: ';
+  const comment = o.comment == null ? '' : String(o.comment);
+  if (kind === 'ok') return head + 'OK';
+  if (kind === 'ng') return head + 'NG — ' + comment;
+  if (kind === 'later') return head + 'あとで';
+  if (kind === 'choice') {
+    const choice = o.choice == null ? '' : String(o.choice);
+    return head + '選択=' + choice + (comment ? ' — ' + comment : '');
+  }
+  if (kind === 'comment') return head + 'コメント — ' + comment;
+  throw new Error('unknown response kind: ' + kind);
+}
+
+// 完了確定行を生成（1-2・done-proposed のカードをユーザーが完了確定した記録・v2.1）。
+export function buildDoneConfirmLine(datetime, mark) {
+  return '- 完了確定（あなた・' + mark + ' ' + datetime + '）';
+}
+
+// decision カード本文から選択肢の頭文字（[A-Z]=）を順序保持・重複排除で抽出（v2.1）。
+// 例: 「選択肢: A=〜／B=〜／C=〜」から ['A','B','C']。抽出できなければ空配列。
+export function extractChoices(body) {
+  if (!body) return [];
+  const out = [];
+  const seen = new Set();
+  const re = /(?:^|[^A-Za-z0-9])([A-Z])\s*=/g;
+  let m;
+  while ((m = re.exec(String(body))) !== null) {
+    const c = m[1];
+    if (!seen.has(c)) { seen.add(c); out.push(c); }
+  }
+  return out;
+}
+
+// カンマ/空白区切りのテキスト or 配列を target 配列へ正規化（v2.1）。
+export function parseTargetInput(v) {
+  if (Array.isArray(v)) return v.map((s) => String(s).trim()).filter((s) => s.length > 0);
+  if (v == null) return [];
+  return String(v).split(/[,、\s]+/).map((s) => s.trim()).filter((s) => s.length > 0);
+}
+
+// target 欄（frontmatter）を設定（v2.1）。空配列かつ欄が元々無い場合は書かない（後方互換）。
+export function setTargetField(card, arr) {
+  const has = card.raw.target !== undefined;
+  if ((!arr || arr.length === 0) && !has) return false;
+  setField(card, 'target', serializeTags(arr || []));
+  return true;
 }
 
 // type の英語表示ラベル（正規化込み）。
@@ -151,6 +213,7 @@ export function parseCard(text) {
     surface: parseQuoted(raw.surface),
     status: raw.status !== undefined ? raw.status : '',
     created: raw.created !== undefined ? raw.created : '',
+    target: parseTags(raw.target), // 対象付け（機能/FPU/CMP/単位ID・欄が無ければ[]・v2.1）
   };
 
   return { order, raw, entries, fm, body, hasFrontmatter: true };
@@ -475,6 +538,7 @@ export function readCardFromText(text, dir, imageNames) {
     surface: parsed.fm.surface,
     status: parsed.fm.status,
     created: parsed.fm.created,
+    target: parsed.fm.target, // 対象付け（v2.1）
     images: imageNames || [],
     sections: {
       body: sections['本文'] || '',

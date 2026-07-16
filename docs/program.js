@@ -7,8 +7,10 @@
 
 import * as P from './parser.js';
 
-const MOBILE_MARK = '（📱）'; // モバイル発の追記に付す出所マーク（INBOX / 検収記録）
+const MOBILE_MARK = '（📱）'; // モバイル発の追記に付す出所マーク（INBOX 等）
+const RESP_MARK = '📱';      // 応答行/完了確定行に埋め込む出所マーク（v2.1）
 const TRASH_DIR = '_trash'; // 削除カードの退避先（Cards/_trash/・物理削除しない=復元可能）
+const ARCHIVE_DIR = '_archive'; // アーカイブ済みカード（Cards/_archive/・検索のみヒット・v2.1）
 const MEMOS_DIR = 'Memos';  // メモ格納（Program/Memos/・1メモ=1ファイル・v1.8）
 const MEMO_DONE = '_done';  // カード化済みメモの退避先（Memos/_done/）
 const MEMO_TRASH = '_trash'; // 削除メモの退避先（Memos/_trash/・物理削除しない）
@@ -57,11 +59,28 @@ export function createProgram(dropbox, config) {
     // フォルダ（C-NNN_slug）と、その中のファイルを集約する。
     const cardDirs = [];
     const filesByDir = new Map(); // dirName -> { mdRev, mdPath, images:[] }
+    // アーカイブ（_archive/C-xxxx_slug/…）は別集約。dir 名は "_archive/C-xxxx_slug"（検索のみヒット・v2.1）。
+    const archivedDirs = [];
+    const archivedFilesByDir = new Map();
     for (const ent of entries) {
       const rel = ent.path_display.slice(cardsRoot.length + 1); // Cards/ 以降
       const seg = rel.split('/');
       // _trash 配下は台帳・全タブ・Board・検索から一元除外（走査の入口・v1.7）。
       if (seg[0] === TRASH_DIR) continue;
+      // _archive 配下は検索のみヒット（一覧/Board/tray/CARD_INDEX からは除外）・v2.1。
+      if (seg[0] === ARCHIVE_DIR) {
+        if (ent['.tag'] === 'folder' && seg.length === 2 && /^C-[UA]?\d+/.test(seg[1])) {
+          const key = ARCHIVE_DIR + '/' + seg[1];
+          if (!archivedFilesByDir.has(key)) { archivedFilesByDir.set(key, { images: [] }); archivedDirs.push(key); }
+        } else if (ent['.tag'] === 'file' && seg.length === 3 && /^C-[UA]?\d+/.test(seg[1])) {
+          const key = ARCHIVE_DIR + '/' + seg[1];
+          if (!archivedFilesByDir.has(key)) { archivedFilesByDir.set(key, { images: [] }); archivedDirs.push(key); }
+          const rec = archivedFilesByDir.get(key);
+          if (seg[2] === 'card.md') { rec.mdRev = ent.rev; rec.mdPath = ent.path_display; }
+          else if (isImageName(seg[2])) rec.images.push(seg[2]);
+        }
+        continue;
+      }
       if (ent['.tag'] === 'folder' && seg.length === 1 && /^C-[UA]?\d+/.test(seg[0])) {
         cardDirs.push(seg[0]);
         if (!filesByDir.has(seg[0])) filesByDir.set(seg[0], { images: [] });
@@ -80,23 +99,29 @@ export function createProgram(dropbox, config) {
       }
     }
 
-    const cards = [];
-    for (const dir of cardDirs.sort()) {
-      const rec = filesByDir.get(dir);
-      if (!rec || !rec.mdPath) continue;
-      const images = rec.images.slice().sort();
-      const cached = cache && cache.get(rec.mdPath);
-      let card;
-      if (cached && cached.rev === rec.mdRev) {
-        // rev 一致 → 再ダウンロードしない（通信量節約）。画像一覧のみ最新へ。
-        card = { ...cached.card, dir, images };
-      } else {
-        const dl = await dropbox.download(rec.mdPath);
-        card = P.readCardFromText(dl.text, dir, images);
+    const buildCards = async (dirs, byDir, archived) => {
+      const out = [];
+      for (const dir of dirs.slice().sort()) {
+        const rec = byDir.get(dir);
+        if (!rec || !rec.mdPath) continue;
+        const images = rec.images.slice().sort();
+        const cached = cache && cache.get(rec.mdPath);
+        let card;
+        if (cached && cached.rev === rec.mdRev) {
+          card = { ...cached.card, dir, images };
+        } else {
+          const dl = await dropbox.download(rec.mdPath);
+          card = P.readCardFromText(dl.text, dir, images);
+        }
+        if (archived) card.archived = true;
+        nextCache.set(rec.mdPath, { rev: rec.mdRev, card });
+        out.push(card);
       }
-      nextCache.set(rec.mdPath, { rev: rec.mdRev, card });
-      cards.push(card);
-    }
+      return out;
+    };
+
+    const cards = (await buildCards(cardDirs, filesByDir, false))
+      .concat(await buildCards(archivedDirs, archivedFilesByDir, true));
     cards.sort((a, b) => P.compareCardId(a.id, b.id));
     return { cards, cache: nextCache, cardDirs };
   }
@@ -161,28 +186,74 @@ export function createProgram(dropbox, config) {
     return created;
   }
 
-  // ---- 検収（OK / NG / あとで） ----
-  async function acceptCard(id, action, comment) {
+  // ---- AI発カードへの応答（1-1・統括AIがparseする固定書式へ1行追記・v2.1） ----
+  // kind: ok/ng/later/choice/comment。statusの機械更新はここだけ（アプリが行う唯一の状態変更）。
+  async function respondCard(id, kind, opts) {
+    const o = opts || {};
     const dir = await findCardDir(id);
     if (!dir) throw new Error('カードが見つかりません: ' + id);
-    const c = (comment || '').trim();
-    if (action === 'ng' && c === '') throw new Error('NG にはコメントが必須です');
+    const comment = String(o.comment == null ? '' : o.comment).replace(/[\r\n]+/g, ' ').trim();
+    const choice = String(o.choice == null ? '' : o.choice).replace(/[\r\n]+/g, ' ').trim();
+    if (kind === 'ng' && comment === '') throw new Error('NG には一言（コメント）が必須です');
+    if (kind === 'comment' && comment === '') throw new Error('コメントが空です');
+    if (kind === 'choice' && choice === '') throw new Error('選択肢が空です');
 
-    let label, newStatus;
-    if (action === 'ok') { label = 'OK'; newStatus = 'consumed'; }
-    else if (action === 'ng') { label = 'NG'; newStatus = 'annotated'; }
-    else if (action === 'later') { label = 'あとで'; newStatus = null; }
-    else throw new Error('不明な検収操作: ' + action);
-
-    const recLine = '- ↳ ' + P.today() + ' 検収=' + label + (c ? '（' + c + '）' : '') + MOBILE_MARK;
     const mdPath = join(cardsRoot, dir, 'card.md');
     await dropbox.updateTextFileWithRetry(mdPath, (text) => {
       const card = P.parseCard(text);
-      card.body = P.appendUnderHeading(card.body, '処理記録', recLine);
+      const dt = P.nowStamp();
+      const status = card.raw.status;
+      const lines = [];
+      let newStatus = null;
+      if (kind === 'ok') {
+        lines.push(P.buildResponseLine(dt, RESP_MARK, 'ok'));
+        if (comment) lines.push(P.buildResponseLine(dt, RESP_MARK, 'comment', { comment }));
+        if (status === 'review') newStatus = 'consumed'; // OKクリックが完了を兼ねる
+      } else if (kind === 'ng') {
+        lines.push(P.buildResponseLine(dt, RESP_MARK, 'ng', { comment })); // status は review のまま
+      } else if (kind === 'later') {
+        lines.push(P.buildResponseLine(dt, RESP_MARK, 'later')); // status は review のまま
+      } else if (kind === 'choice') {
+        lines.push(P.buildResponseLine(dt, RESP_MARK, 'choice', { choice, comment }));
+        newStatus = 'responded'; // decision の選択＝応答済み（統括の伝播待ち）
+      } else if (kind === 'comment') {
+        lines.push(P.buildResponseLine(dt, RESP_MARK, 'comment', { comment })); // status 変更なし
+      } else {
+        throw new Error('不明なrespond kind: ' + kind);
+      }
+      for (const l of lines) card.body = P.appendUnderHeading(card.body, '処理記録', l);
       if (newStatus) P.setField(card, 'status', newStatus);
       return P.serializeCard(card);
     });
     await regenerateIndex();
+  }
+
+  // ---- 完了ボタン（1-2）: done-proposed のカードをユーザーが完了確定 → consumed + 完了確定行（v2.1） ----
+  async function confirmDone(id) {
+    const dir = await findCardDir(id);
+    if (!dir) throw new Error('カードが見つかりません: ' + id);
+    const mdPath = join(cardsRoot, dir, 'card.md');
+    await dropbox.updateTextFileWithRetry(mdPath, (text) => {
+      const card = P.parseCard(text);
+      card.body = P.appendUnderHeading(card.body, '処理記録', P.buildDoneConfirmLine(P.nowStamp(), RESP_MARK));
+      P.setField(card, 'status', 'consumed');
+      return P.serializeCard(card);
+    });
+    await regenerateIndex();
+  }
+
+  // ---- target 欄の後付け編集（1-3・ユーザー発/AI発どちらでも・v2.1） ----
+  async function setTarget(id, target) {
+    const dir = await findCardDir(id);
+    if (!dir) throw new Error('カードが見つかりません: ' + id);
+    const arr = P.parseTargetInput(target);
+    const mdPath = join(cardsRoot, dir, 'card.md');
+    await dropbox.updateTextFileWithRetry(mdPath, (text) => {
+      const card = P.parseCard(text);
+      P.setTargetField(card, arr);
+      return P.serializeCard(card);
+    });
+    await regenerateIndex(); // target は CARD_INDEX には出ないが、他端末との整合のため再生成
   }
 
   // ---- 状態変更・本文/記録追記（汎用・将来ビュー用） ----
@@ -374,10 +445,11 @@ export function createProgram(dropbox, config) {
   // ---- CARD_INDEX.md 再生成（ヘッダ保持・表のみ・rev 競合リトライ） ----
   async function regenerateIndex() {
     const { cards } = await loadCards();
+    const listed = cards.filter((c) => !c.archived); // アーカイブは台帳に載せない（検索のみ・v2.1）
     const indexPath = join(cardsRoot, 'CARD_INDEX.md');
     await dropbox.updateTextFileWithRetry(
       indexPath,
-      (existing) => P.regenerateIndexContent(existing || '# CARD_INDEX — カード台帳\n', cards),
+      (existing) => P.regenerateIndexContent(existing || '# CARD_INDEX — カード台帳\n', listed),
       { createIfMissing: true },
     );
   }
@@ -398,7 +470,9 @@ export function createProgram(dropbox, config) {
     loadCards,
     downloadImage,
     createCard,
-    acceptCard,
+    respondCard,
+    confirmDone,
+    setTarget,
     updateCard,
     deleteCard,
     addComment,

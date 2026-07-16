@@ -10,7 +10,7 @@ import { h, cardTile } from './shared.js';
 let root, listEl;
 
 function isTrayCard(c) {
-  return (c.type === 'report' || c.type === 'review') && c.status === 'review';
+  return (c.type === 'report' || c.type === 'review') && c.status === 'review' && !c.archived;
 }
 
 function create(ctx) {
@@ -72,14 +72,15 @@ function trayCard(card, ctx) {
   return c;
 }
 
+// Review タブの3ボタンも新書式・新status規則へ統一（respondCard・v2.1）。action は kind として渡す。
 async function act(ctx, card, action, comment, btns) {
   btns.forEach((b) => (b.disabled = true));
   try {
-    await ctx.program.acceptCard(card.id, action, comment);
-    ctx.toast('検収を記録しました（' + (action === 'ok' ? 'OK' : action === 'ng' ? 'NG' : 'あとで') + '）');
+    await ctx.program.respondCard(card.id, action, { comment });
+    ctx.toast('応答を記録しました（' + (action === 'ok' ? 'OK' : action === 'ng' ? 'NG' : 'あとで') + '）');
     await ctx.reload();
   } catch (e) {
-    ctx.toast('検収の記録に失敗: ' + (e.message || e));
+    ctx.toast('応答の記録に失敗: ' + (e.message || e));
     btns.forEach((b) => (b.disabled = false));
   }
 }

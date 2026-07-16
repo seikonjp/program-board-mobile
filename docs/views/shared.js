@@ -32,6 +32,8 @@ export function cardTile(ctx, card, opts) {
   if (o.showType && card.type) meta.appendChild(h('span', 'chip', P.typeLabel(card.type)));
   if (card.status) meta.appendChild(h('span', 'chip chip-status', P.STATUS_LABEL[card.status] || card.status));
   if (card.subject) meta.appendChild(h('span', 'chip', '主題: ' + card.subject));
+  (card.target || []).forEach((tg) => meta.appendChild(h('span', 'chip chip-target', '対象: ' + tg)));
+  if (card.archived) meta.appendChild(h('span', 'chip chip-archived', 'アーカイブ'));
   body.appendChild(meta);
   t.appendChild(body);
   t.onclick = () => openCardDetail(ctx, card);
@@ -73,8 +75,10 @@ export function openCardDetail(ctx, card) {
   if (card.type) meta.appendChild(h('span', 'chip', P.typeLabel(card.type)));
   if (card.subject) meta.appendChild(h('span', 'chip', '主題: ' + card.subject));
   (card.tags || []).forEach((tag) => meta.appendChild(h('span', 'chip', '#' + tag)));
+  (card.target || []).forEach((tg) => meta.appendChild(h('span', 'chip chip-target', '対象: ' + tg)));
   if (card.status) meta.appendChild(h('span', 'chip chip-status', P.STATUS_LABEL[card.status] || card.status));
   if (card.surface) meta.appendChild(h('span', 'chip', '浮上: ' + card.surface));
+  if (card.archived) meta.appendChild(h('span', 'chip chip-archived', 'アーカイブ'));
   body.appendChild(meta);
 
   // 画像: あれば縦並びで表示・なければ画像領域ごと出さない。
@@ -92,8 +96,15 @@ export function openCardDetail(ctx, card) {
   addSection(body, '注釈', card.sections && card.sections.note);
   addSection(body, '処理記録', card.sections && card.sections.record);
 
-  // 操作系（v1.7・詳細=選択状態のみ）。ユーザー発=削除+コメント（即動作）／AI発=OK/NGトグル(表示のみ)+コメント(準備中)。
-  addOperations(ctx, body, card);
+  // アーカイブは読み取り専用（操作系・target編集は出さない・v2.1）。
+  if (!card.archived) {
+    // 完了ボタン（1-2）: status=done-proposed のカードは型・方向を問わず表示。
+    if (card.status === 'done-proposed') addDoneButton(ctx, body, card);
+    // target 欄の後付け編集（1-3・ユーザー発/AI発どちらでも）。
+    addTargetEditor(ctx, body, card);
+    // 操作系（v2.1・詳細=応答配線）。
+    addOperations(ctx, body, card);
+  }
 
   dSheet.appendChild(body);
   dBackdrop.hidden = false;
@@ -169,7 +180,73 @@ function autoGrow(ta) {
   ta.style.height = Math.min(ta.scrollHeight, 240) + 'px';
 }
 
-// カード詳細の操作系（v1.7）。direction で出し分け。一覧タイルには出さない（Acceptance タブの3ボタンとは別系統）。
+// 応答をサーバへ送る共通処理（1-1・詳細シートから）。成功後は詳細を再描画。
+async function sendRespond(ctx, card, kind, opts, btns) {
+  (btns || []).forEach((b) => (b.disabled = true));
+  try {
+    await ctx.program.respondCard(card.id, kind, opts || {});
+    ctx.toast('応答を記録しました');
+    await ctx.reload();
+    const updated = (ctx.state.cards || []).find((c) => c.id === card.id);
+    if (updated) openCardDetail(ctx, updated); else dBackdrop.hidden = true;
+  } catch (e) {
+    ctx.toast('応答の記録に失敗: ' + (e.message || e));
+    (btns || []).forEach((b) => (b.disabled = false));
+  }
+}
+
+// 完了ボタン（1-2）。status=done-proposed のカードでユーザーが完了確定 → consumed + 完了確定行。
+function addDoneButton(ctx, wrap, card) {
+  const box = h('div', 'detail-done');
+  box.appendChild(h('p', 'view-hint', 'AI側から完了が提案されています。'));
+  const btn = h('button', 'btn-primary op-done', '完了にする');
+  btn.onclick = async () => {
+    btn.disabled = true;
+    try {
+      await ctx.program.confirmDone(card.id);
+      ctx.toast('完了にしました');
+      await ctx.reload();
+      const updated = (ctx.state.cards || []).find((c) => c.id === card.id);
+      if (updated) openCardDetail(ctx, updated); else dBackdrop.hidden = true;
+    } catch (e) {
+      ctx.toast('完了確定に失敗: ' + (e.message || e));
+      btn.disabled = false;
+    }
+  };
+  box.appendChild(btn);
+  wrap.appendChild(box);
+}
+
+// target 欄の後付け編集（1-3・ユーザー発/AI発どちらでも）。カンマ/空白区切り→配列。
+function addTargetEditor(ctx, wrap, card) {
+  const box = h('div', 'detail-target');
+  box.appendChild(h('label', null, '対象（機能/FPU/CMP/単位ID・カンマ区切り）'));
+  const input = h('input', 'field op-target');
+  input.type = 'text';
+  input.value = (card.target || []).join(', ');
+  input.placeholder = '例: SP01, CM07';
+  box.appendChild(input);
+  const save = h('button', 'btn-secondary op-target-save', '対象を保存');
+  save.onclick = async () => {
+    save.disabled = true;
+    try {
+      await ctx.program.setTarget(card.id, input.value);
+      ctx.toast('対象を保存しました');
+      await ctx.reload();
+      const updated = (ctx.state.cards || []).find((c) => c.id === card.id);
+      if (updated) openCardDetail(ctx, updated); else dBackdrop.hidden = true;
+    } catch (e) {
+      ctx.toast('対象の保存に失敗: ' + (e.message || e));
+      save.disabled = false;
+    }
+  };
+  box.appendChild(save);
+  wrap.appendChild(box);
+}
+
+// カード詳細の操作系（v2.1）。direction で出し分け。一覧タイルには出さない（Review タブの3ボタンとは別系統）。
+//   edit    = ユーザー発（user-to-claude）: 編集＋コメント（即動作）＋削除
+//   respond = AI発（claude-to-user）: decision=選択肢ボタン／その他=OK/NG/あとで＋コメントのみ送信
 function addOperations(ctx, wrap, card) {
   const mode = P.cardOperationMode(card.direction);
   if (mode === 'none') return;
@@ -180,35 +257,13 @@ function addOperations(ctx, wrap, card) {
     const editBtn = h('button', 'btn-secondary op-edit', '編集');
     editBtn.onclick = () => openEditCardSheet(ctx, card);
     ops.appendChild(editBtn);
-  }
 
-  if (mode === 'respond') {
-    // OK/NG トグル（どちらか一方 or 無選択・同じボタン再タップで解除）。表示のみ＝保存しない（画面内のみ）。
-    const row = h('div', 'op-toggle-row');
-    const okBtn = h('button', 'op-toggle op-ok', 'OK');
-    const ngBtn = h('button', 'op-toggle op-ng', 'NG');
-    let sel = null;
-    const sync = () => {
-      okBtn.classList.toggle('is-on', sel === 'ok');
-      ngBtn.classList.toggle('is-on', sel === 'ng');
-    };
-    okBtn.onclick = () => { sel = (sel === 'ok') ? null : 'ok'; sync(); };
-    ngBtn.onclick = () => { sel = (sel === 'ng') ? null : 'ng'; sync(); };
-    row.appendChild(okBtn);
-    row.appendChild(ngBtn);
-    ops.appendChild(row);
-  }
-
-  // コメント入力欄（両モード共通の大きさ・日本語20〜30字が見える2行前後・上限なし・自動伸長）。
-  const ta = h('textarea', 'field op-comment');
-  ta.rows = 2;
-  ta.placeholder = 'コメント';
-  ta.addEventListener('input', () => autoGrow(ta));
-  ops.appendChild(ta);
-
-  const sendRow = h('div', 'op-send-row');
-  if (mode === 'edit') {
-    // ユーザー発: コメント送信（処理記録へ即追記）。
+    // コメント入力欄＋送信（処理記録へ即追記）。
+    const ta = h('textarea', 'field op-comment');
+    ta.rows = 2;
+    ta.placeholder = 'コメント';
+    ta.addEventListener('input', () => autoGrow(ta));
+    ops.appendChild(ta);
     const send = h('button', 'btn-primary op-send', '送信');
     send.onclick = async () => {
       const text = ta.value.trim();
@@ -225,10 +280,9 @@ function addOperations(ctx, wrap, card) {
         send.disabled = false;
       }
     };
-    sendRow.appendChild(send);
-    ops.appendChild(sendRow);
+    ops.appendChild(send);
 
-    // ユーザー発: 削除（確認 → Cards/_trash へ移動・復元可能）。
+    // 削除（確認 → Cards/_trash へ移動・復元可能）。
     const del = h('button', 'btn-danger op-delete', 'このカードを削除');
     del.onclick = async () => {
       if (!window.confirm('このカードを削除しますか？（Cards/_trash へ移動します・復元可能）')) return;
@@ -245,11 +299,71 @@ function addOperations(ctx, wrap, card) {
     };
     ops.appendChild(del);
   } else {
-    // AI発: 送信は準備中（不活性・今回は配線しない）。
-    const send = h('button', 'btn-primary op-send', '送信（準備中）');
-    send.disabled = true;
-    sendRow.appendChild(send);
-    ops.appendChild(sendRow);
+    // AI発（respond）: コメント欄は共通。応答ボタンは type で出し分け（v2.1）。
+    const ta = h('textarea', 'field op-comment');
+    ta.rows = 2;
+    ta.placeholder = 'コメント（NGは一言必須）';
+    ta.addEventListener('input', () => autoGrow(ta));
+    ops.appendChild(ta);
+
+    if (P.normalizeType(card.type) === 'decision') {
+      // decision: 本文から選択肢（[A-Z]=）を抽出してボタン化。抽出できなければ自由入力。
+      const choices = P.extractChoices(card.sections && card.sections.body);
+      if (choices.length) {
+        const row = h('div', 'op-choice-row');
+        choices.forEach((ch) => {
+          const b = h('button', 'op-choice', '選択 ' + ch);
+          b.onclick = () => sendRespond(ctx, card, 'choice', { choice: ch, comment: ta.value.trim() }, [b]);
+          row.appendChild(b);
+        });
+        ops.appendChild(row);
+      } else {
+        const freeRow = h('div', 'op-choice-free');
+        const free = h('input', 'field op-choice-input');
+        free.type = 'text';
+        free.placeholder = '選択（自由入力）';
+        const send = h('button', 'btn-primary op-send', '選択を送信');
+        send.onclick = () => {
+          const v = free.value.trim();
+          if (!v) { free.focus(); return; }
+          sendRespond(ctx, card, 'choice', { choice: v, comment: ta.value.trim() }, [send]);
+        };
+        freeRow.appendChild(free);
+        freeRow.appendChild(send);
+        ops.appendChild(freeRow);
+      }
+      const cbtn = h('button', 'btn-secondary op-comment-only', 'コメントのみ送信');
+      cbtn.onclick = () => {
+        const v = ta.value.trim();
+        if (!v) { ta.focus(); return; }
+        sendRespond(ctx, card, 'comment', { comment: v }, [cbtn]);
+      };
+      ops.appendChild(cbtn);
+    } else {
+      // review/report 等: OK / NG / あとで＋コメントのみ送信。
+      const row = h('div', 'op-respond-row');
+      const okBtn = h('button', 'btn-ok op-ok', 'OK');
+      const ngBtn = h('button', 'btn-ng op-ng', 'NG');
+      const laterBtn = h('button', 'btn-later op-later', 'あとで');
+      const btns = [okBtn, ngBtn, laterBtn];
+      okBtn.onclick = () => sendRespond(ctx, card, 'ok', { comment: ta.value.trim() }, btns);
+      ngBtn.onclick = () => {
+        if (!ta.value.trim()) { ta.focus(); ta.placeholder = 'NGには一言（コメント）が必須です'; ta.classList.add('field-error'); return; }
+        sendRespond(ctx, card, 'ng', { comment: ta.value.trim() }, btns);
+      };
+      laterBtn.onclick = () => sendRespond(ctx, card, 'later', {}, btns);
+      row.appendChild(okBtn);
+      row.appendChild(ngBtn);
+      row.appendChild(laterBtn);
+      ops.appendChild(row);
+      const cbtn = h('button', 'btn-secondary op-comment-only', 'コメントのみ送信');
+      cbtn.onclick = () => {
+        const v = ta.value.trim();
+        if (!v) { ta.focus(); return; }
+        sendRespond(ctx, card, 'comment', { comment: v }, [cbtn]);
+      };
+      ops.appendChild(cbtn);
+    }
   }
 
   wrap.appendChild(ops);

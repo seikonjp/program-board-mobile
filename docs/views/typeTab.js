@@ -18,6 +18,7 @@ function matches(card, terms) {
     s.body || '',
     s.note || '',
     (card.tags || []).join(' '),
+    (card.target || []).join(' '), // 対象付けも全文検索対象（v2.1）
     s.record || '',
   ].join('\n').toLowerCase();
   return terms.every((t) => hay.includes(t));
@@ -60,7 +61,9 @@ export function makeTypeTabView({ id, tabLabel, type, hint }) {
     const terms = q ? q.split(/\s+/).filter(Boolean) : [];
 
     let cards = P.cardsForType(ctx.state.cards, type);
+    // 検索時のみアーカイブを含める（一覧はアーカイブ除外・v2.1）。
     if (terms.length) cards = cards.filter((c) => matches(c, terms));
+    else cards = cards.filter((c) => !c.archived);
 
     listEl.innerHTML = '';
     if (cards.length === 0) {

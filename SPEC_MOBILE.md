@@ -17,7 +17,7 @@
 - カード=`Cards/C-〈方向1字〉〈4桁連番〉_slug/card.md`（U=ユーザー発／A=AI発・方向別連番。YAML frontmatter＋「## 本文」「## 注釈（私が記入）」「## 処理記録」）＋同フォルダ画像。書式見本=`Cards/C-U0000_TEMPLATE/card.md`（必読）
 - 新規カード: list_folderで既存最大ID+1（3桁0詰め）・slugはtitleから安全化・status=new・画像はカメラロールから選択しJPEG/PNGのままアップロード（長辺2048px超は縮小してよい）
 - INBOX追記: download→§1末尾に`- YYYY-MM-DD 本文（📱）`を追記→**rev指定のupdate mode**でupload（409競合時は再download→再適用・最大3回）。§2/§3は不変
-- 検収: card.mdの「## 処理記録」へ`- ↳ YYYY-MM-DD 検収=OK/NG（コメント）/あとで（📱）`追記＋frontmatter status更新（OK→consumed／NG→annotated・コメント必須／あとで→reviewのまま）。rev指定update
+- 応答（AI発カード・v2.1）: card.mdの「## 処理記録」へ`- 応答（あなた・📱 YYYY-MM-DD HH:MM）: OK`（NG=`: NG — 一言`〔一言必須〕／`: 選択=X — コメント`／`: あとで`／`: コメント — 本文`）の固定書式（統括AIのparse対象）で追記＋status機械更新（review+OK→consumed／NG・あとで→reviewのまま／decision+選択→responded）。完了提案（done-proposed）は完了ボタン→consumed＋`- 完了確定（あなた・📱 …）`。status語彙に`responded`（応答済み）・`done-proposed`（完了提案）を追加。frontmatterに任意`target`欄（対象付け・欄なしでも後方互換）。`Cards/_archive/`は検索のみヒット（一覧除外）。rev指定update
 - `CARD_INDEX.md`: カード書込後に表部分のみ再生成（ヘッダ`>`引用・見出し保持・Mac版と同一ロジック）
 - 読み取り専用: `DECISION_QUEUE.md`・`CONTROL.md`
 

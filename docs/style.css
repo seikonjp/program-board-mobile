@@ -229,6 +229,8 @@ textarea.field { min-height: 84px; resize: vertical; }
 }
 .chip-id { background: var(--brand); color: #fff; font-weight: 600; }
 .chip-status { background: #e2e7ef; color: #33405a; font-weight: 600; }
+.chip-target { background: #dcefe3; color: #1f7a4d; font-weight: 600; }
+.chip-archived { background: #ece6da; color: #8a6d1f; font-weight: 600; }
 
 .img-lazy { background: #eef0f4; }
 .img-error { background: #f6e6e6; }
@@ -369,6 +371,27 @@ textarea.op-comment { min-height: 56px; resize: vertical; }
   font-size: 15px; font-weight: 600; cursor: pointer;
 }
 .btn-danger:disabled { opacity: .5; }
+
+/* 応答配線・完了・target 編集（v2.1） */
+.op-respond-row { display: flex; gap: 8px; }
+.op-respond-row .btn-ok, .op-respond-row .btn-ng, .op-respond-row .btn-later { flex: 1; min-height: var(--tap); }
+.op-choice-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.op-choice {
+  min-height: var(--tap); border-radius: 10px; border: 1px solid var(--line);
+  background: var(--surface); color: var(--ink); font-size: 15px; font-weight: 600;
+  padding: 0 16px; cursor: pointer;
+}
+.op-choice-free { display: flex; gap: 8px; }
+.op-choice-input { flex: 1; }
+.op-comment-only { align-self: flex-start; }
+.detail-done {
+  margin-top: 16px; border-top: 1px solid var(--line); padding-top: 14px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.op-done { min-height: var(--tap); }
+.detail-target { margin-top: 14px; display: flex; flex-direction: column; gap: 6px; }
+.detail-target label { font-size: 12px; color: var(--ink-soft); }
+.op-target-save { align-self: flex-start; }
 
 .new-thumbs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
 .new-thumb { width: 76px; height: 76px; object-fit: cover; border-radius: 8px; cursor: pointer; }

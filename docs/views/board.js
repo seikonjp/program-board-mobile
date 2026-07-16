@@ -98,7 +98,8 @@ function syncSegments(ctx) {
 
 function renderColumns(ctx) {
   // 種類(type)別6列（v1.6・parser.js の boardColumns）。列見出しが種類を表す。
-  const cards = ctx.state.cards || [];
+  // アーカイブは一覧に出さない（検索のみ・v2.1）。
+  const cards = (ctx.state.cards || []).filter((c) => !c.archived);
   columnsWrap.innerHTML = '';
   P.boardColumns(cards).forEach((g) => {
     const col = h('div', 'column');
