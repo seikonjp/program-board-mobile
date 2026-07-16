@@ -60,6 +60,28 @@ export const config = {
     { id: 'completion', label: '完成定義', sub: 'archplan-core/Docs/TestDefinitions', recurse: true, numbered: false, match: '\\.md$', exclude: '^(METHOD|_)' },
     { id: 'rds', label: 'RDS', sub: 'Projects/RequirementManagement/Works/RDS', recurse: false, numbered: true, match: '^RDS_.*\\.md$', exclude: '' },
   ],
+
+  // Views 進捗ソース（config化・sheetArchplanRoot 相対・アダプタ型で正規化・v2.3）。
+  // 差し替え（初版census→合流後FEATURE_LIST）は sub+type の変更のみ。
+  progressSources: {
+    census: { sub: 'Projects/DevelopmentPlan/FEATURE_FPU_CENSUS.md', type: 'census' },
+    taskLedger: { sub: 'Projects/DevelopmentPlan/TASK_LEDGER.md', type: 'taskLedger' },
+    lanes: { sub: 'Projects/TestSystem/LANES_BOARD_2026-07.md', type: 'lanes' },
+    testStatus: { sub: 'archplan-core/Docs/TestDefinitions/test_status.json', type: 'testStatus' },
+  },
+
+  // Views ライブラリ8軸（DOC_GOVERNANCE_LIST View9の進捗以外・v2.3）。
+  // sub:null（品質基準枠）・未存在正本は「未整備」表示で無事故。開いた時のみ取得。
+  librarySources: [
+    { id: 'feature', label: '機能', sub: 'archplan-core/Docs/Features/FEATURE_LIST.json', type: 'json' },
+    { id: 'com', label: 'コム', sub: 'archplan-core/Docs/Species/COM_CATALOG.json', type: 'json' },
+    { id: 'condition', label: '設計条件', sub: 'archplan-core/Docs/Conditions/ELEMENT_CATALOG.md', type: 'md' },
+    { id: 'operation', label: '操作', sub: 'Projects/OperationManagement/OPERATION_ROUTING_TABLE.md', type: 'md' },
+    { id: 'screen', label: '画面', sub: 'Projects/ScreenManagement/SCREEN_LIST.md', type: 'md' },
+    { id: 'project', label: 'プロジェクト', sub: 'Program/PROJECT_REGISTRY.md', type: 'md' },
+    { id: 'quality', label: '品質基準', sub: null, type: 'md' },
+    { id: 'requirement', label: '要件', sub: 'Docs/Requirements/REQUIREMENT_MAP_DATA.json', type: 'json' },
+  ],
 };
 
 // programRoot（'/ArchPlan/Program'）の親（'/ArchPlan'）＝Sheets ソースのベースルート。

@@ -681,3 +681,178 @@ export function sheetPayload(text, numbered) {
   const preamble = (raw.length ? p.body.slice(0, raw[0].start) : p.body).replace(/\s+$/, '');
   return { meta: parseSheetMeta(text), preamble, blocks };
 }
+
+// ---------------------------------------------------------------------------
+// Views データアダプタ層（v2.3・3-1/3-2）——Mac版 server.js と挙動互換の純パーサ群。
+// 「取得→正規化レコード列」を型ごとに分離。ソース差し替え（census→FEATURE_LIST）は
+// config+アダプタ1個の追加で済む。DOM・Dropbox 非依存（fixture 文字列でテスト）。
+// ---------------------------------------------------------------------------
+
+const CENSUS_CODE_RE = /（([A-Z][A-Z0-9_]*)）/g;
+const CENSUS_TAG_RE = /\[(実装|一部|未実装|将来想定|不明)\/([^/\[\]]+)\/([^\[\]]+?)\]/;
+const CENSUS_TAG_CANDIDATE_RE = /\[(実装|一部|未実装|将来想定|不明)([^\[\]]*)\]/;
+
+// FEATURE_FPU_CENSUS.md（チェックリスト版）→ 正規化レコード列。§1/§2 のみ収集。崩れ行は skip。
+export function parseCensus(text) {
+  const lines = String(text == null ? '' : text).split('\n');
+  const records = [];
+  let skipped = 0;
+  let collecting = false;
+  let category = null;
+  let parentFpu = null;
+  for (const line of lines) {
+    const sec = /^##\s+§\s*(\d)/.exec(line);
+    if (sec) { collecting = (sec[1] === '1' || sec[1] === '2'); continue; }
+    const cat = /^###\s+([A-Za-z]{2,3})(?:[\s（(]|$)/.exec(line);
+    if (/^###\s+/.test(line)) { category = cat ? cat[1] : null; parentFpu = null; continue; }
+    if (!collecting) continue;
+    const cm = /^(\s*)-\s+\[([ xX])\]\s+(.*)$/.exec(line);
+    if (!cm) continue;
+    const indent = cm[1].length;
+    const done = cm[2].toLowerCase() === 'x';
+    let rest = cm[3].trim();
+    if (rest === '') { skipped++; continue; }
+
+    let state = null, form = null, stage = null, hasTag = false;
+    const full = CENSUS_TAG_RE.exec(rest);
+    if (full) {
+      state = full[1]; form = full[2].trim(); stage = full[3].trim(); hasTag = true;
+      rest = (rest.slice(0, full.index) + ' ' + rest.slice(full.index + full[0].length)).trim();
+    } else if (CENSUS_TAG_CANDIDATE_RE.test(rest)) {
+      skipped++; continue;
+    }
+
+    let fpu = null;
+    CENSUS_CODE_RE.lastIndex = 0;
+    let m;
+    while ((m = CENSUS_CODE_RE.exec(rest)) !== null) fpu = m[1];
+    let namePart = rest.replace(CENSUS_CODE_RE, ' ');
+    const dash = namePart.indexOf(' — ');
+    let name = namePart, desc = '';
+    if (dash !== -1) { name = namePart.slice(0, dash); desc = namePart.slice(dash + 3).trim(); }
+    name = name.replace(/\*\*/g, '').replace(/◇/g, '').replace(/\s+/g, ' ').trim();
+    if (name === '') { skipped++; continue; }
+
+    const level = indent === 0 ? 'feature' : 'fpu';
+    if (level === 'feature' && fpu) parentFpu = fpu;
+    const joinKey = fpu || (level === 'fpu' ? parentFpu : null);
+    records.push({ done, level, name, desc, fpu, joinKey, state, form, stage, hasTag, category });
+  }
+  return { records, skipped };
+}
+
+// TASK_LEDGER.md → タスク行の配列（IDなし自由文）。
+export function parseTaskLedger(text) {
+  const lines = String(text == null ? '' : text).split('\n');
+  const entries = [];
+  let section = null;
+  for (const line of lines) {
+    const hm = /^##\s+(.+)$/.exec(line);
+    if (hm) { section = hm[1].trim(); continue; }
+    const bm = /^\s*-\s+(?:\[[ xX]\]\s+)?(.+?)\s*$/.exec(line);
+    if (!bm) continue;
+    entries.push({ text: bm[1].trim(), section });
+  }
+  return { entries };
+}
+
+// LANES_BOARD → レーン欄（### 見出し）の {id, heading, text}。
+export function parseLanes(text) {
+  const lines = String(text == null ? '' : text).split('\n');
+  const lanes = [];
+  let cur = null;
+  let inLaneSection = false;
+  for (const line of lines) {
+    if (/^##\s+1\.\s*レーン欄/.test(line)) { inLaneSection = true; continue; }
+    if (/^##\s+/.test(line) && !/^##\s+1\./.test(line)) { inLaneSection = false; cur = null; continue; }
+    const hm = /^###\s+(.+)$/.exec(line);
+    if (hm && inLaneSection) {
+      const heading = hm[1].trim();
+      cur = { id: heading.split(/[（(]/)[0].trim(), heading, text: '' };
+      lanes.push(cur);
+      continue;
+    }
+    if (cur) cur.text += line + '\n';
+  }
+  return { lanes };
+}
+
+// test_status.json → {機能ID:'green'|'red'}。未存在（null）→ null＝無表示。壊れJSON→null。
+export function parseTestStatus(jsonText) {
+  if (jsonText == null) return null;
+  let obj;
+  try { obj = JSON.parse(jsonText); } catch { return null; }
+  if (!obj || typeof obj !== 'object') return null;
+  const norm = (v) => {
+    if (v === true) return 'green';
+    if (v === false) return 'red';
+    const s = String(v == null ? '' : v).toLowerCase();
+    if (['green', 'pass', 'passed', 'ok', '緑', '○'].includes(s)) return 'green';
+    if (['red', 'fail', 'failed', 'ng', '赤', '×'].includes(s)) return 'red';
+    return null;
+  };
+  const src = obj.features && typeof obj.features === 'object' ? obj.features : obj;
+  const map = {};
+  for (const [k, v] of Object.entries(src)) {
+    const val = (v && typeof v === 'object') ? (v.status != null ? v.status : (v.color != null ? v.color : v.result)) : v;
+    const c = norm(val);
+    if (c) map[k] = c;
+  }
+  return map;
+}
+
+export function countTasksFor(entries, joinKey, name) {
+  const list = entries || [];
+  return list.filter((e) => {
+    const t = e.text || '';
+    if (joinKey && joinKey.length >= 2 && t.includes(joinKey)) return true;
+    if (name && name.length >= 3 && t.includes(name)) return true;
+    return false;
+  }).length;
+}
+
+export function laneActiveFor(lanes, rec) {
+  const list = lanes || [];
+  const key = rec && rec.joinKey;
+  const name = rec && rec.name;
+  return list.some((l) => {
+    const hay = (l.heading || '') + '\n' + (l.text || '');
+    if (key && key.length >= 2 && hay.includes(key)) return true;
+    if (name && name.length >= 3 && hay.includes(name)) return true;
+    return false;
+  });
+}
+
+export function testColorFor(map, rec) {
+  if (!map) return null;
+  if (rec.joinKey && map[rec.joinKey]) return map[rec.joinKey];
+  if (rec.name && map[rec.name]) return map[rec.name];
+  return null;
+}
+
+// 進捗の合成レコード列（3-2）。機能ID・段階・状態・タスク数・稼働印・テスト色。
+export function buildProgressRows(censusRes, ledgerRes, lanesRes, testStatusMap) {
+  const records = (censusRes && censusRes.records) || [];
+  const entries = (ledgerRes && ledgerRes.entries) || [];
+  const lanes = (lanesRes && lanesRes.lanes) || [];
+  return records.map((r) => ({
+    id: r.joinKey || r.fpu || r.name,
+    name: r.name,
+    level: r.level,
+    category: r.category,
+    stage: r.stage,
+    state: r.state,
+    form: r.form,
+    hasTag: r.hasTag,
+    taskCount: countTasksFor(entries, r.joinKey, r.name),
+    laneActive: laneActiveFor(lanes, r),
+    testColor: testColorFor(testStatusMap, r),
+  }));
+}
+
+// ライブラリmd項目の見出しブロック（目次/コメント用・parseSheetBlocks を level>=1 で再利用）。
+export function libraryMdBlocks(text) {
+  return parseSheetBlocks(text, false)
+    .filter((b) => b.kind === 'heading')
+    .map((b) => ({ index: b.index, level: b.level, id: b.id, heading: b.heading }));
+}

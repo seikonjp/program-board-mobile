@@ -23,7 +23,9 @@
 
 ## 2. 画面（最上位ナビ4群＋設定・iPadは広幅で一覧+詳細の2ペイン）
 
-> **build20（Phase 2）**: 最上位ナビを4群へ再編＝**Cards**（従来の Board/type別/Review/Memo を第2階層に内包）／**Sheets**（新設）／**Views**（Phase 3・準備中）／**Sessions**（Phase 4・準備中）。各view定義に `group` 属性・`buildTabbar` を2階層化（群バー＋第2階層タブ）。**Sheets**＝シナリオ/完成定義/RDS を項目単位で表示（一覧はファイル名のみ・本文は開いた時DL）＋項目直下に💬コメント（`updateTextFileWithRetry`・本文編集なし）＋frontmatter `state`/`review_card` のシートに状態チップ＋承認ボタン（reviewed のみ活性→reviewカードOK＋consumed／シートstate→approved）。ソースパスは `config.js`（programRoot の親＝`/ArchPlan` から導出）。
+> **build21（Phase 3・Views）**: **Views** 群を実装（Progress＋Library）。**Progress**＝機能×段階×実装状態の一望（FEATURE_FPU_CENSUS/TASK_LEDGER/LANES_BOARD/テスト状況JSON をアダプタで合成・開いた時のみ取得＝通信量配慮）。**Library**＝View9の残り8軸を読み取り整形（一覧は `get_metadata` で存在確認＝大きいファイルは落とさない・本文は開いた時DL・未整備軸は無事故）。行/項目の💬コメント→**consultカード自動生成**（C-U採番・target=項目ID・正本無書き込み）。ソースは `config.js`（progressSources/librarySources・`/ArchPlan` から導出）。
+>
+> **build20（Phase 2）**: 最上位ナビを4群へ再編＝**Cards**（従来の Board/type別/Review/Memo を第2階層に内包）／**Sheets**（新設）／**Views**（build21実装）／**Sessions**（Phase 4・準備中）。各view定義に `group` 属性・`buildTabbar` を2階層化（群バー＋第2階層タブ）。**Sheets**＝シナリオ/完成定義/RDS を項目単位で表示（一覧はファイル名のみ・本文は開いた時DL）＋項目直下に💬コメント（`updateTextFileWithRetry`・本文編集なし）＋frontmatter `state`/`review_card` のシートに状態チップ＋承認ボタン（reviewed のみ活性→reviewカードOK＋consumed／シートstate→approved）。ソースパスは `config.js`（programRoot の親＝`/ArchPlan` から導出）。
 
 1. **ボード**: 状態5列（狭幅ではセグメント切替・広幅ではカンバン）。カード=サムネ+タイトル+タグ。**新規作成: 「写真を選ぶ」ボタン（カメラロール/カメラ・複数可）＋テキスト欄＋作成**——モバイルの主動線なので最短タップ数で
 2. **検収トレイ**: type=report/reviewかつstatus=reviewを大きなスクショ付きで縦並び・**OK／NG（コメント欄）／あとで**の3ボタン（type/status値=review・カード詳細の操作モードはrespond〔二重意味回避〕。日本語表示「検収待ち」「検収」等は不変）

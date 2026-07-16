@@ -537,3 +537,53 @@ textarea.op-comment { min-height: 56px; resize: vertical; }
 .sheet-comment-row { display: flex; gap: 6px; margin-top: 8px; align-items: flex-start; }
 textarea.sheet-comment-input { flex: 1; min-height: 40px; resize: none; }
 .sheet-comment-send { white-space: nowrap; }
+
+/* ---- Views: 進捗＋ライブラリ（v2.3・Phase3） ---- */
+.views-subtabs { display: flex; gap: 8px; margin-bottom: 12px; }
+.subtab { flex: 1; border: 1px solid var(--line); background: var(--surface); color: var(--ink); padding: 8px; border-radius: 10px; font-weight: 600; font-size: 14px; min-height: var(--tap); }
+.subtab.is-active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+.progress-toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 6px; }
+.progress-toolbar .progress-search { flex: 1 1 100%; }
+.progress-select { flex: 1; border: 1px solid var(--line); border-radius: 10px; padding: 8px; font-size: 14px; background: var(--surface); color: var(--ink); min-height: var(--tap); }
+.progress-note { margin: 4px 0 10px; }
+.progress-group { margin-bottom: 16px; }
+.progress-group-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.progress-group-title { font-weight: 700; font-size: 14px; }
+.progress-group-count { font-size: 11px; color: var(--ink-soft); background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; }
+.progress-row { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); padding: 8px 10px; margin-bottom: 6px; }
+.progress-row.is-fpu { margin-left: 12px; }
+.progress-name { font-size: 13px; font-weight: 600; display: block; margin-bottom: 6px; }
+.progress-meta { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.chip-cat { background: #e6ecfb; color: #2f6fed; font-weight: 600; }
+.chip-state-実装 { background: #e3f4ea; color: #1f7a4d; font-weight: 600; }
+.chip-state-一部 { background: #fff2d8; color: #8a6d1f; font-weight: 600; }
+.chip-state-未実装 { background: #f6e6e6; color: #a23c3c; font-weight: 600; }
+.chip-state-将来想定 { background: #eef1f6; color: #556; font-weight: 600; }
+.chip-state-不明 { background: #ece6da; color: #6b5b3a; font-weight: 600; }
+.chip-task { background: #efe6fb; color: #7a3fd6; font-weight: 600; }
+.chip-lane { background: #d8f0ff; color: #1c6f9c; font-weight: 600; }
+.chip-test-green { background: #e3f4ea; color: #1f7a4d; font-weight: 700; }
+.chip-test-red { background: #f6e6e6; color: #a23c3c; font-weight: 700; }
+
+.view-comment-btn { border: 1px solid var(--line); background: var(--bg); color: var(--ink); border-radius: 8px; padding: 4px 10px; font-size: 12px; min-height: 32px; }
+.view-comment-box { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.view-comment-input { min-height: 60px; }
+
+.library-axes { display: flex; flex-wrap: wrap; gap: 8px; }
+.library-axis { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 10px; padding: 10px 14px; min-width: 110px; min-height: var(--tap); }
+.library-axis.is-empty { opacity: .5; }
+.library-axis-label { font-weight: 700; font-size: 14px; }
+.library-axis-meta { font-size: 11px; color: var(--ink-soft); }
+.library-detail-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 12px; }
+.library-title { font-weight: 700; font-size: 15px; }
+.library-search { flex: 1 1 100%; }
+.library-toc { display: flex; flex-direction: column; gap: 2px; }
+.library-block { border-top: 1px solid var(--line); padding: 6px 0; }
+.library-block-head { display: flex; align-items: center; gap: 8px; }
+.library-block-heading { font-size: 13px; }
+.library-block-heading.lvl-1 { font-weight: 700; font-size: 15px; }
+.library-block-heading.lvl-2 { font-weight: 700; }
+.library-block-heading.lvl-3 { padding-left: 10px; }
+.library-block-heading.lvl-4, .library-block-heading.lvl-5, .library-block-heading.lvl-6 { padding-left: 20px; color: var(--ink-soft); }
+.library-pre { white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, monospace; font-size: 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px; max-height: 55vh; overflow: auto; }

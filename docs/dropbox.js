@@ -309,6 +309,11 @@ export function createDropboxClient({ clientId, fetchImpl, tokens, onTokensChang
     });
   }
 
+  // get_metadata（存在確認・読み取り専用）。未存在は DropboxError(409 not_found) を throw。
+  async function getMetadata(dpath) {
+    return rpc('/files/get_metadata', { path: dpath, include_media_info: false });
+  }
+
   // list_folder（ページング込みで全件返す）。
   async function listFolder(dpath, { recursive = false } = {}) {
     const first = await rpc('/files/list_folder', { path: dpath, recursive, include_media_info: false });
@@ -372,6 +377,7 @@ export function createDropboxClient({ clientId, fetchImpl, tokens, onTokensChang
     upload,
     uploadText,
     move,
+    getMetadata,
     listFolder,
     updateTextFileWithRetry,
   };

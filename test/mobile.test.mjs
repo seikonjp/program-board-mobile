@@ -757,6 +757,12 @@ function makeMockDropbox(initial) {
       if (!meta) return res({ status: 409, body: JSON.stringify({ error_summary: 'path/not_found/..' }) });
       return res({ status: 200, body: meta.content, headers: { 'Dropbox-API-Result': JSON.stringify({ rev: meta.rev }) } });
     }
+    if (url.endsWith('/files/get_metadata')) {
+      const arg = JSON.parse(opts.body);
+      const meta = store.get(arg.path);
+      if (!meta) return res({ status: 409, body: JSON.stringify({ error_summary: 'path/not_found/..' }) });
+      return res({ status: 200, body: JSON.stringify({ '.tag': 'file', path_display: arg.path, rev: meta.rev }) });
+    }
     if (url.endsWith('/files/upload')) {
       const arg = JSON.parse(opts.headers['Dropbox-API-Arg']);
       const mode = arg.mode || { '.tag': 'add' };
@@ -1192,6 +1198,149 @@ test('㉚ sheets view + group wiring (source-text checks) (v2.2)', () => {
   assert.ok(app.includes('buildGroupbar') && app.includes('enabledViewIdsForGroup(ctx.state.activeGroup)'), 'buildTabbar は群でフィルタ');
   assert.ok(app.includes('function setGroup('), '群切替 setGroup がある');
 
-  // 準備中プレースホルダ
-  assert.ok(readDoc('views/views.js').includes('準備中') && readDoc('views/sessions.js').includes('準備中'), 'Views/Sessions は準備中');
+  // 準備中プレースホルダ（Views は Phase3 で実装済み＝Sessions のみ準備中）
+  assert.ok(readDoc('views/sessions.js').includes('準備中'), 'Sessions は準備中（Phase4）');
+});
+
+// ---------------------------------------------------------------------------
+// ㉛ Views アダプタ: parseCensus（正常＋崩れ行skip・FPUコード継承・§1/§2のみ）（v2.3）
+// ---------------------------------------------------------------------------
+test('㉛ parseCensus: checklist rows, tag split, code inheritance, broken-row skip (v2.3)', () => {
+  const census = [
+    '## §1 カテゴリ別の機能チェックリスト',
+    '### PL（プランニング機能・132行）',
+    '- [ ] **敷地の配置**（PL_SP_SP）',
+    '  - [ ] カスタム敷地の配置 — ユーザーが任意の形状で配置 [未実装/MG/S6]',
+    '  - [x] 敷地の初期配置 — テストケースから初期配置 [実装/AG/済]',
+    '- [ ] 周辺状況の配置（隣地建物）（PL_SP_CTX） [不明/AG/S3]',
+    '- [ ] 壊れ行 [未実装/AG]',
+    '## §2 リスト外の追記',
+    '### MF 集合住宅系',
+    '  - [ ] 複数棟の自動配棟 ◇ [未実装/AG/S5]',
+    '## §3 件数サマリ',
+    '- [ ] これは無視される [実装/AG/済]',
+  ].join('\n');
+  const { records, skipped } = P.parseCensus(census);
+  assert.strictEqual(skipped, 1, '崩れ行1件skip');
+  assert.ok(!records.some((r) => r.name === 'これは無視される'), '§3以降は非収集');
+  const custom = records.find((r) => r.name === 'カスタム敷地の配置');
+  assert.strictEqual(custom.joinKey, 'PL_SP_SP', '子FPUは親コードを継承');
+  assert.deepStrictEqual([custom.state, custom.form, custom.stage], ['未実装', 'MG', 'S6']);
+  assert.strictEqual(records.find((r) => r.name === '敷地の初期配置').done, true, 'x はdone');
+  const ctx = records.find((r) => r.name.startsWith('周辺状況の配置'));
+  assert.strictEqual(ctx.fpu, 'PL_SP_CTX', 'コード括弧のみ採用');
+  const mf = records.find((r) => r.name === '複数棟の自動配棟');
+  assert.ok(mf && mf.stage === 'S5' && mf.category === 'MF', '§2収集・◇除去');
+});
+
+// ---------------------------------------------------------------------------
+// ㉜ Views 合成: task/lane/testColor/レコードの形・test_status 未存在→null/存在→重ね（v2.3）
+// ---------------------------------------------------------------------------
+test('㉜ progress synthesis: task/lane/testColor + row shape (Mac版と挙動互換) (v2.3)', () => {
+  const census = ['## §1 x', '### PL（p）', '- [ ] 基準線の計算（PL_SP_BSLC） [実装/AG/済]', '- [ ] テラスの配置（PL_SP_TRCP） [未実装/AG/S1]'].join('\n');
+  const ledger = ['## 未分類', '- PL_SP_BSLC の余裕率を見直す', '- 別件'].join('\n');
+  const lanes = ['## 1. レーン欄', '### SP（敷地）', '- 担当: PL_SP_BSLC 稼働中', '### AP', '- 無関係'].join('\n');
+  const cRes = P.parseCensus(census), lRes = P.parseTaskLedger(ledger), laRes = P.parseLanes(lanes);
+
+  const rows0 = P.buildProgressRows(cRes, lRes, laRes, P.parseTestStatus(null));
+  const bslc = rows0.find((r) => r.id === 'PL_SP_BSLC');
+  assert.strictEqual(bslc.taskCount, 1, 'コード一致でタスク1');
+  assert.strictEqual(bslc.laneActive, true, 'レーン出現→稼働');
+  assert.strictEqual(bslc.testColor, null, 'test_status未存在→無表示');
+  assert.deepStrictEqual({ id: bslc.id, stage: bslc.stage, state: bslc.state, form: bslc.form },
+    { id: 'PL_SP_BSLC', stage: '済', state: '実装', form: 'AG' });
+  assert.strictEqual(rows0.find((r) => r.id === 'PL_SP_TRCP').taskCount, 0);
+
+  const map = P.parseTestStatus(JSON.stringify({ PL_SP_BSLC: 'green', PL_SP_TRCP: 'fail' }));
+  const rows = P.buildProgressRows(cRes, lRes, laRes, map);
+  assert.strictEqual(rows.find((r) => r.id === 'PL_SP_BSLC').testColor, 'green');
+  assert.strictEqual(rows.find((r) => r.id === 'PL_SP_TRCP').testColor, 'red', 'fail→red');
+  assert.strictEqual(P.parseTestStatus('{壊れ'), null, '壊れJSON→null');
+  assert.deepStrictEqual(P.libraryMdBlocks('# A\n## B\n- x\n### C\n').map((b) => b.heading), ['A', 'B', 'C'], 'md見出しブロック抽出');
+});
+
+// ---------------------------------------------------------------------------
+// ㉝ program.loadProgress: 4源泉をアダプタ経由で合成（開いた時のみ取得・fetchモック）（v2.3）
+// ---------------------------------------------------------------------------
+test('㉝ program.loadProgress synthesizes 4 sources (open-on-demand) (v2.3)', async () => {
+  const A = '/ArchPlan';
+  const { program } = mockProgram({
+    [A + '/Projects/DevelopmentPlan/FEATURE_FPU_CENSUS.md']: '## §1 x\n### PL（p）\n- [ ] 基準線の計算（PL_SP_BSLC） [実装/AG/済]\n',
+    [A + '/Projects/DevelopmentPlan/TASK_LEDGER.md']: '## 未分類\n- PL_SP_BSLC 見直す\n',
+    [A + '/Projects/TestSystem/LANES_BOARD_2026-07.md']: '## 1. レーン欄\n### SP\n- PL_SP_BSLC 稼働\n',
+    // test_status.json は置かない＝未存在
+  }, { progressSources: APP_CONFIG.progressSources, librarySources: APP_CONFIG.librarySources });
+  const p = await program.loadProgress();
+  assert.strictEqual(p.sources.census, true);
+  assert.strictEqual(p.sources.testStatus, false, 'test_status未存在→false（無表示）');
+  const row = p.rows.find((r) => r.id === 'PL_SP_BSLC');
+  assert.ok(row && row.taskCount === 1 && row.laneActive === true && row.testColor === null, '合成が効く');
+});
+
+// ---------------------------------------------------------------------------
+// ㉞ program.listLibrary/readLibraryItem: 存在確認・未整備の無事故・md/json ペイロード（v2.3）
+// ---------------------------------------------------------------------------
+test('㉞ program library list/read: availability, missing-axis graceful, md/json (v2.3)', async () => {
+  const A = '/ArchPlan';
+  const { program } = mockProgram({
+    [A + '/archplan-core/Docs/Conditions/ELEMENT_CATALOG.md']: '# 設計条件\n\n## CN-1 敷地\nx\n\n## CN-2 道路\ny\n',
+    [A + '/archplan-core/Docs/Features/FEATURE_LIST.json']: JSON.stringify({ meta: { name: 'x' } }),
+    // com/screen/operation/project/requirement は置かない＝未整備
+  }, { progressSources: APP_CONFIG.progressSources, librarySources: APP_CONFIG.librarySources });
+
+  const list = await program.listLibrary();
+  const byId = Object.fromEntries(list.map((s) => [s.id, s.available]));
+  assert.deepStrictEqual(list.map((s) => s.id),
+    ['feature', 'com', 'condition', 'operation', 'screen', 'project', 'quality', 'requirement'], 'View9の8軸');
+  assert.strictEqual(byId.condition, true, '実在md→available');
+  assert.strictEqual(byId.feature, true, '実在json→available');
+  assert.strictEqual(byId.quality, false, 'sub:null（品質基準枠）→未整備');
+  assert.strictEqual(byId.com, false, '未存在→未整備（無事故）');
+
+  const md = await program.readLibraryItem('condition');
+  assert.ok(md.type === 'md' && md.available && md.blocks.some((b) => b.heading === 'CN-1 敷地'), 'md見出しブロック');
+  const js = await program.readLibraryItem('feature');
+  assert.ok(js.type === 'json' && js.parsedOk && js.pretty.includes('"name"'), 'json整形');
+  const q = await program.readLibraryItem('quality');
+  assert.strictEqual(q.available, false, '未整備軸→available:false（無事故）');
+});
+
+// ---------------------------------------------------------------------------
+// ㉟ program.createViewCommentCard: C-U採番・target・本文=コメント+引用・正本無書き込み（3-4）
+// ---------------------------------------------------------------------------
+test('㉟ view comment creates consult card (C-U, target, quote, source untouched) (v2.3)', async () => {
+  const A = '/ArchPlan';
+  const censusPath = A + '/Projects/DevelopmentPlan/FEATURE_FPU_CENSUS.md';
+  const censusText = '## §1 x\n### PL（p）\n- [ ] 基準線の計算（PL_SP_BSLC） [実装/AG/済]\n';
+  const { program, store } = mockProgram({ [censusPath]: censusText },
+    { progressSources: APP_CONFIG.progressSources, librarySources: APP_CONFIG.librarySources });
+
+  const created = await program.createViewCommentCard({
+    itemId: 'PL_SP_BSLC', itemLabel: '基準線の計算', comment: '様式を確認したい', quote: '基準線の計算（済/実装）',
+  });
+  assert.ok(/^C-U\d{4}$/.test(created.id), 'C-U採番');
+  const cardMd = store.get(A + '/Program/Cards/' + created.dirName + '/card.md').content;
+  const parsed = P.parseCard(cardMd);
+  assert.strictEqual(parsed.fm.type, 'consult', 'type=consult');
+  assert.strictEqual(parsed.fm.direction, 'user-to-claude', 'direction=user→AI');
+  assert.strictEqual(parsed.fm.status, 'new', 'status=new');
+  assert.deepStrictEqual(parsed.fm.target, ['PL_SP_BSLC'], 'target=当該項目ID');
+  const body = P.parseSections(parsed.body)['本文'];
+  assert.ok(body.includes('様式を確認したい') && body.includes('> 基準線の計算（済/実装）'), '本文=コメント+引用');
+  // 正本（census）は一切書き換えない（Cards のみ生成）
+  assert.strictEqual(store.get(censusPath).content, censusText, '正本ファイルは無改変');
+  await assert.rejects(program.createViewCommentCard({ itemId: 'x', comment: '' }), /空/, '空コメント拒否');
+});
+
+// ---------------------------------------------------------------------------
+// ㊱ Views ビュー: 群配線・進捗/ライブラリの program 委譲・行コメント配線（ソース文字列検証）（v2.3）
+// ---------------------------------------------------------------------------
+test('㊱ views view: progress/library wiring + comment→card (source-text checks) (v2.3)', () => {
+  const v = readDoc('views/views.js');
+  assert.ok(v.includes("registerView({ id: 'views'"), 'views ビューが登録される');
+  assert.ok(v.includes('ctx.program.loadProgress()'), '進捗を program に委譲');
+  assert.ok(v.includes('ctx.program.listLibrary()') && v.includes('ctx.program.readLibraryItem('), 'ライブラリを program に委譲');
+  assert.ok(v.includes('ctx.program.createViewCommentCard('), '行/項目コメント→consultカードを配線');
+  assert.ok(v.includes('段階') && v.includes('STAGE_ORDER'), '進捗は段階でグルーピング');
+  assert.ok(v.includes('未整備'), '未存在軸は未整備表示');
 });

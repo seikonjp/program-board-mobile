@@ -550,6 +550,89 @@ export function createProgram(dropbox, config) {
     return { ok: true, reviewCard, sheet: await readSheet(sourceId, file) };
   }
 
+  // ---- Views（進捗＋ライブラリ・v2.3・3-1〜3-4） ----
+  // ベースルート＝Sheets と同じ archplanRoot（programRoot の親）。読み取り専用。
+  const progressSources = config.progressSources || {};
+  const librarySources = config.librarySources || [];
+
+  // archplanRoot 相対の sub を読む（未存在は null で無事故）。
+  async function readViewText(sub) {
+    if (!sub) return null;
+    try {
+      const { text } = await dropbox.download(join(archplanRoot, sub));
+      return text;
+    } catch (e) {
+      if (isNotFound(e)) return null;
+      throw e;
+    }
+  }
+
+  // 進捗ペイロード（4源泉をアダプタ経由で合成・開いた時のみ取得＝通信量配慮）。
+  async function loadProgress() {
+    const [censusText, ledgerText, lanesText, testText] = await Promise.all([
+      readViewText(progressSources.census && progressSources.census.sub),
+      readViewText(progressSources.taskLedger && progressSources.taskLedger.sub),
+      readViewText(progressSources.lanes && progressSources.lanes.sub),
+      readViewText(progressSources.testStatus && progressSources.testStatus.sub),
+    ]);
+    const census = P.parseCensus(censusText);
+    const ledger = P.parseTaskLedger(ledgerText);
+    const lanes = P.parseLanes(lanesText);
+    const testMap = P.parseTestStatus(testText);
+    return {
+      rows: P.buildProgressRows(census, ledger, lanes, testMap),
+      skipped: census.skipped,
+      sources: {
+        census: censusText != null, taskLedger: ledgerText != null,
+        lanes: lanesText != null, testStatus: testMap != null,
+      },
+    };
+  }
+
+  function librarySourceById(id) { return librarySources.find((s) => s.id === id) || null; }
+
+  // ライブラリ軸一覧（get_metadata で存在確認＝大きいファイルは落とさない・v2.3）。
+  async function listLibrary() {
+    const out = [];
+    for (const s of librarySources) {
+      let available = false;
+      if (s.sub) {
+        try { await dropbox.getMetadata(join(archplanRoot, s.sub)); available = true; }
+        catch (e) { if (!isNotFound(e)) throw e; available = false; }
+      }
+      out.push({ id: s.id, label: s.label, type: s.type, available });
+    }
+    return out;
+  }
+
+  // ライブラリ項目（開いた時のみ取得）。md=見出しブロック＋raw／json=raw+整形。未存在→available:false。
+  async function readLibraryItem(id) {
+    const src = librarySourceById(id);
+    if (!src) throw new Error('不明な軸: ' + id);
+    const text = src.sub ? await readViewText(src.sub) : null;
+    if (text == null) return { id: src.id, label: src.label, type: src.type, available: false };
+    if (src.type === 'json') {
+      let pretty = text, parsedOk = false;
+      try { pretty = JSON.stringify(JSON.parse(text), null, 2); parsedOk = true; } catch { /* 生 */ }
+      return { id: src.id, label: src.label, type: 'json', available: true, text, pretty, parsedOk };
+    }
+    return { id: src.id, label: src.label, type: 'md', available: true, text, blocks: P.libraryMdBlocks(text) };
+  }
+
+  // View行コメント → consultカード自動生成（3-4・正本には一切書き込まない＝Cards生成のみ）。
+  async function createViewCommentCard({ itemId, itemLabel, comment, quote } = {}) {
+    const c = String(comment == null ? '' : comment).trim();
+    if (c === '') throw new Error('コメントが空です');
+    const id = String(itemId == null ? '' : itemId).trim();
+    const label = String(itemLabel == null ? '' : itemLabel).trim();
+    const q = String(quote == null ? '' : quote).trim();
+    const title = 'コメント: ' + (label || id || '（View項目）');
+    const body = q ? c + '\n\n> ' + q.replace(/\r?\n/g, '\n> ') : c;
+    const created = await createCard({ title, body, direction: 'user-to-claude', type: 'consult' });
+    if (id) await setTarget(created.id, id); // target=当該項目ID（採番後に付与・CARD_INDEX再生成込み）
+    return created;
+  }
+
   return {
     root,
     cardsRoot,
@@ -558,6 +641,10 @@ export function createProgram(dropbox, config) {
     readSheet,
     addSheetComment,
     approveSheet,
+    loadProgress,
+    listLibrary,
+    readLibraryItem,
+    createViewCommentCard,
     downloadImage,
     createCard,
     respondCard,
