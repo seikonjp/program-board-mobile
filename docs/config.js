@@ -56,7 +56,7 @@ export const config = {
   // ベース = programRoot の親（'/ArchPlan/Program' → '/ArchPlan'）＋ sub。
   // match/exclude はファイル basename に適用する正規表現（文字列・exclude 空＝除外なし）。
   sheetSources: [
-    { id: 'scenario', label: 'シナリオ', sub: 'Docs/ConOps/Scenarios', recurse: false, numbered: false, match: '^SC-.*\\.md$', exclude: '^_TEMPLATE\\.md$' },
+    { id: 'scenario', label: 'シナリオ', sub: 'Docs/ConOps/Scenarios', recurse: true, numbered: false, match: '^SC-.*\\.md$', exclude: '^_' },
     { id: 'completion', label: '完成定義', sub: 'archplan-core/Docs/TestDefinitions', recurse: true, numbered: false, match: '\\.md$', exclude: '^(METHOD|_)' },
     { id: 'rds', label: 'RDS', sub: 'Projects/RequirementManagement/Works/RDS', recurse: false, numbered: true, match: '^RDS_.*\\.md$', exclude: '' },
   ],
