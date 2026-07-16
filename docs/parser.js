@@ -683,6 +683,67 @@ export function sheetPayload(text, numbered) {
 }
 
 // ---------------------------------------------------------------------------
+// Sessions（起動チケット・v2.4・Phase4）——Mac版 server.js と挙動互換の純パーサ。
+// モバイルは表示のみ（▶起動は非活性=「Macで起動」）。frontmatter は簡易 YAML（key: value）。
+// ---------------------------------------------------------------------------
+
+// briefing.md のパース（frontmatter またはなし）。target は [a,b] リスト、他はスカラ文字列。
+export function parseTicket(text) {
+  const src = String(text == null ? '' : text);
+  if (!src.startsWith('---\n')) return { hasFrontmatter: false, fm: {}, body: src };
+  const close = src.indexOf('\n---\n', 4);
+  if (close === -1) return { hasFrontmatter: false, fm: {}, body: src };
+  const fmText = src.slice(4, close);
+  const body = src.slice(close + '\n---\n'.length);
+  const fm = {};
+  for (const line of fmText.split('\n')) {
+    const sep = line.indexOf(':');
+    if (sep === -1) continue;
+    const key = line.slice(0, sep).trim();
+    if (!key) continue;
+    fm[key] = line.slice(sep + 1).trim();
+  }
+  return { hasFrontmatter: true, fm, body };
+}
+
+export function ticketHeading(body) {
+  const m = /^#\s+(.*)$/m.exec(String(body || ''));
+  return m ? m[1].trim() : '';
+}
+export function ticketIdFromString(s) {
+  const m = /\bS-\d+\b/.exec(String(s || ''));
+  return m ? m[0] : '';
+}
+// frontmatter が無い手動チケットの冒頭 blockquote（`role: **…**`）から role を推定。
+export function roleFromBody(body) {
+  const m = /role\s*[:：]\s*\*{0,2}\s*([^／|*\n]+?)\s*\*{0,2}\s*(?:[／|]|$)/m.exec(String(body || ''));
+  return m ? m[1].trim() : '';
+}
+
+// チケットの表示メタ（dirName はフォルダ名・例 'S-0001_slug'）。起動はモバイル非対応=launchable なし。
+export function ticketMeta(dirName, text) {
+  const parsed = parseTicket(text);
+  const fm = parsed.fm;
+  const heading = ticketHeading(parsed.body);
+  const id = (fm.id && fm.id.trim()) || ticketIdFromString(heading) || ticketIdFromString(dirName);
+  let title = fm.title ? fm.title.trim() : '';
+  if (!title && heading) title = heading.includes('—') ? heading.slice(heading.indexOf('—') + 1).trim() : heading;
+  if (!title) { const us = dirName.indexOf('_'); title = us === -1 ? dirName : dirName.slice(us + 1); }
+  return {
+    id, dir: dirName, title,
+    role: fm.role || (parsed.hasFrontmatter ? '' : roleFromBody(parsed.body)),
+    target: parseTags(fm.target),
+    model: fm.model || '',
+    permissionMode: fm.permission_mode || '',
+    remoteControlName: fm.remote_control_name || '',
+    cwd: fm.cwd || '',
+    confirmMode: fm.confirm_mode || '',
+    status: fm.status || '',
+    hasFrontmatter: parsed.hasFrontmatter,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Views データアダプタ層（v2.3・3-1/3-2）——Mac版 server.js と挙動互換の純パーサ群。
 // 「取得→正規化レコード列」を型ごとに分離。ソース差し替え（census→FEATURE_LIST）は
 // config+アダプタ1個の追加で済む。DOM・Dropbox 非依存（fixture 文字列でテスト）。

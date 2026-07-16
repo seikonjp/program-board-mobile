@@ -1198,8 +1198,8 @@ test('㉚ sheets view + group wiring (source-text checks) (v2.2)', () => {
   assert.ok(app.includes('buildGroupbar') && app.includes('enabledViewIdsForGroup(ctx.state.activeGroup)'), 'buildTabbar は群でフィルタ');
   assert.ok(app.includes('function setGroup('), '群切替 setGroup がある');
 
-  // 準備中プレースホルダ（Views は Phase3 で実装済み＝Sessions のみ準備中）
-  assert.ok(readDoc('views/sessions.js').includes('準備中'), 'Sessions は準備中（Phase4）');
+  // Sessions は Phase4 で実装済み（準備中プレースホルダは廃止・詳細は ㊴）
+  assert.ok(!readDoc('views/sessions.js').includes('準備中'), 'Sessions の準備中プレースホルダは廃止');
 });
 
 // ---------------------------------------------------------------------------
@@ -1343,4 +1343,114 @@ test('㊱ views view: progress/library wiring + comment→card (source-text chec
   assert.ok(v.includes('ctx.program.createViewCommentCard('), '行/項目コメント→consultカードを配線');
   assert.ok(v.includes('段階') && v.includes('STAGE_ORDER'), '進捗は段階でグルーピング');
   assert.ok(v.includes('未整備'), '未存在軸は未整備表示');
+});
+
+// ---------------------------------------------------------------------------
+// Phase 4（Sessions・起動チケット・v2.4）
+// ---------------------------------------------------------------------------
+
+const TICKET_FULL_M =
+`---
+id: S-0009
+title: テストセッション
+role: 実行（Builder）
+target: [SP01, SP02]
+model: opus
+permission_mode: default
+remote_control_name: s0009-builder
+cwd: .
+confirm_mode: 承認
+status: 起票
+---
+
+# S-0009 起動ブリーフィング — テストセッション
+
+## 使命
+
+これはテスト用のブリーフィングです。
+
+## 進め方
+
+- 手順1
+- 手順2
+`;
+
+const TICKET_NONE_M =
+`# S-0001 起動ブリーフィング — S1現行レーンのシナリオ起草
+
+> 種別: セッション起動チケット（初号・手動起動用） ／ role: **設計相談（Architect）** ／ 発行: 2026-07-16
+
+## 使命
+
+手動起動用チケット。
+`;
+
+// ㊲ チケットparse3形（完備／欠け欄／なし）＋ ticketMeta（Mac版と挙動互換）
+test('㊲ parseTicket 3 forms + ticketMeta derivation (Mac版互換) (v2.4)', () => {
+  // 完備
+  const full = P.parseTicket(TICKET_FULL_M);
+  assert.strictEqual(full.hasFrontmatter, true);
+  assert.strictEqual(full.fm.permission_mode, 'default');
+  const mFull = P.ticketMeta('S-0009_テスト', TICKET_FULL_M);
+  assert.strictEqual(mFull.id, 'S-0009');
+  assert.strictEqual(mFull.title, 'テストセッション');
+  assert.strictEqual(mFull.role, '実行（Builder）');
+  assert.deepStrictEqual(mFull.target, ['SP01', 'SP02']);
+  assert.strictEqual(mFull.permissionMode, 'default');
+  assert.strictEqual(mFull.remoteControlName, 's0009-builder');
+  assert.strictEqual(mFull.status, '起票');
+
+  // 欠け欄（frontmatterに model 等なし）→ 壊れず空文字で表示
+  const partial = `---\nid: S-0010\ntitle: 欠け欄\nrole: 設計相談\nstatus: 起票\n---\n\n本文。\n`;
+  const mPart = P.ticketMeta('S-0010_x', partial);
+  assert.strictEqual(mPart.model, '', '欠けた欄は空文字');
+  assert.strictEqual(mPart.permissionMode, '', '欠けた欄は空文字');
+  assert.strictEqual(mPart.hasFrontmatter, true);
+
+  // frontmatterなし（S-0001型）→ 見出しから id/名称・blockquote から role
+  const none = P.parseTicket(TICKET_NONE_M);
+  assert.strictEqual(none.hasFrontmatter, false);
+  const mNone = P.ticketMeta('S-0001_シナリオ起草S1', TICKET_NONE_M);
+  assert.strictEqual(mNone.id, 'S-0001', '見出しから id');
+  assert.strictEqual(mNone.title, 'S1現行レーンのシナリオ起草', '— 以降が名称');
+  assert.strictEqual(mNone.role, '設計相談（Architect）', '冒頭 blockquote から role');
+  assert.strictEqual(mNone.hasFrontmatter, false);
+});
+
+// ㊳ program.listSessions / readSession（Dropbox モック・手動チケット含む・本文つき詳細）
+test('㊳ program listSessions/readSession: list (incl. manual), detail body, not-found (v2.4)', async () => {
+  const A = '/ArchPlan';
+  const initial = {
+    [A + '/Program/Sessions/S-0001_シナリオ起草S1/briefing.md']: TICKET_NONE_M,
+    [A + '/Program/Sessions/S-0009_テスト/briefing.md']: TICKET_FULL_M,
+  };
+  const { program } = mockProgram(initial);
+  const list = await program.listSessions();
+  assert.deepStrictEqual(list.map((s) => s.id), ['S-0001', 'S-0009'], 'dir 昇順で2件（手動含む）');
+  assert.strictEqual(list.find((s) => s.id === 'S-0001').hasFrontmatter, false, '手動チケットは frontmatter なし');
+  assert.strictEqual(list.find((s) => s.id === 'S-0009').permissionMode, 'default');
+
+  const detail = await program.readSession('S-0009');
+  assert.strictEqual(detail.id, 'S-0009');
+  assert.ok(detail.body.includes('## 使命'), '詳細に本文');
+  await assert.rejects(program.readSession('S-9999'), /見つかりません/, '不明IDは reject');
+
+  // Sessions フォルダ未存在なら空一覧（無事故）
+  const { program: empty } = mockProgram({ [A + '/Program/Cards/C-0001_a/card.md']: '---\nid: C-0001\n---\n\n' });
+  assert.deepStrictEqual(await empty.listSessions(), [], '未存在は空一覧');
+});
+
+// ㊴ Sessions ビュー: 群配線・program 委譲・▶は非活性（Macで起動）（ソース文字列検証）
+test('㊴ sessions view: wiring + program delegation + launch disabled=Macで起動 (v2.4)', () => {
+  const v = readDoc('views/sessions.js');
+  assert.ok(v.includes("registerView({ id: 'sessions'"), 'sessions ビューが登録される');
+  assert.ok(v.includes('ctx.program.listSessions()'), '一覧を program に委譲');
+  assert.ok(v.includes('ctx.program.readSession('), '詳細を program に委譲');
+  assert.ok(v.includes('▶ Macで起動') && v.includes('btn.disabled = true'), '▶は非活性表示（Macで起動）');
+  assert.ok(v.includes('起動は Mac 版のみ'), 'Macで起動の注記');
+  assert.ok(!v.includes('準備中'), '旧「準備中」プレースホルダは廃止');
+  assert.ok(v.includes('renderBriefingBody'), 'briefing 本文を md 整形表示');
+  // config に sessions ソースが宣言され、群配線されている
+  assert.strictEqual(viewGroup('sessions'), 'sessions', 'sessions は sessions 群');
+  assert.ok(APP_CONFIG.sessionsSub, 'config に sessionsSub が宣言される');
 });

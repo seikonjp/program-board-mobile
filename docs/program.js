@@ -633,10 +633,62 @@ export function createProgram(dropbox, config) {
     return created;
   }
 
+  // ---- Sessions（起動チケット・v2.4・Phase4） ----
+  // Program/Sessions/S-*/briefing.md を一覧・詳細表示（読み取り専用）。▶起動はモバイル非対応。
+  const sessionsRoot = join(root, config.sessionsSub || 'Sessions');
+
+  // S-*/briefing.md の dir→path マップ（未存在は空）。
+  async function sessionBriefingMap() {
+    let entries = [];
+    try { entries = await dropbox.listFolder(sessionsRoot, { recursive: true }); }
+    catch (e) { if (!isNotFound(e)) throw e; return new Map(); }
+    const map = new Map();
+    for (const ent of entries) {
+      if (ent['.tag'] !== 'file') continue;
+      const rel = ent.path_display.slice(sessionsRoot.length + 1);
+      const seg = rel.split('/');
+      if (seg.length === 2 && seg[1] === 'briefing.md' && /^S-\d+/.test(seg[0])) map.set(seg[0], ent.path_display);
+    }
+    return map;
+  }
+
+  // 一覧（各 briefing を DL してメタ抽出＝件数少・通信量許容）。dir 昇順。
+  async function listSessions() {
+    const map = await sessionBriefingMap();
+    const dirs = [...map.keys()].sort();
+    const out = [];
+    for (const dir of dirs) {
+      const { text } = await dropbox.download(map.get(dir));
+      out.push(P.ticketMeta(dir, text));
+    }
+    return out;
+  }
+
+  // 詳細（本文つき）。id はフォルダ名 prefix か frontmatter/見出しの S-番号で照合。
+  async function readSession(id) {
+    const map = await sessionBriefingMap();
+    const wanted = String(id || '').trim();
+    let dir = null;
+    for (const d of map.keys()) {
+      if (d === wanted || d.startsWith(wanted + '_') || P.ticketIdFromString(d) === wanted) { dir = d; break; }
+    }
+    if (!dir) {
+      for (const d of map.keys()) {
+        const { text } = await dropbox.download(map.get(d));
+        if (P.ticketMeta(d, text).id === wanted) { dir = d; break; }
+      }
+    }
+    if (!dir) throw new Error('チケットが見つかりません: ' + id);
+    const { text } = await dropbox.download(map.get(dir));
+    return { ...P.ticketMeta(dir, text), body: P.parseTicket(text).body };
+  }
+
   return {
     root,
     cardsRoot,
     loadCards,
+    listSessions,
+    readSession,
     listSheets,
     readSheet,
     addSheetComment,

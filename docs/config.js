@@ -70,6 +70,10 @@ export const config = {
     testStatus: { sub: 'archplan-core/Docs/TestDefinitions/test_status.json', type: 'testStatus' },
   },
 
+  // Sessions（起動チケット・v2.4・Phase4）。programRoot 直下 'Sessions'（S-*/briefing.md）。
+  // モバイルは表示のみ（▶起動は非活性=「Macで起動」）。
+  sessionsSub: 'Sessions',
+
   // Views ライブラリ8軸（DOC_GOVERNANCE_LIST View9の進捗以外・v2.3）。
   // sub:null（品質基準枠）・未存在正本は「未整備」表示で無事故。開いた時のみ取得。
   librarySources: [
