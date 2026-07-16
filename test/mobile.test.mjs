@@ -79,19 +79,28 @@ test('① card frontmatter round-trip is byte-identical (C-000 相当 fixture)',
 // ---------------------------------------------------------------------------
 // ② ID 採番（既存最大 +1・4桁0詰め・混在桁・9999 超）
 // ---------------------------------------------------------------------------
-test('② nextCardId increments max and zero-pads to 4 digits (混在桁・上限なし)', () => {
-  assert.strictEqual(P.nextCardId([]), 'C-0000');
-  assert.strictEqual(P.nextCardId(['C-000_TEMPLATE']), 'C-0001');
+test('② nextCardId increments U-series max and zero-pads to 4 digits (混在桁・上限なし・Mac版と同一仕様)', () => {
+  assert.strictEqual(P.nextCardId([]), 'C-U0000');
+  assert.strictEqual(P.nextCardId(['C-U0000_TEMPLATE']), 'C-U0001');
   assert.strictEqual(
-    P.nextCardId(['C-000_TEMPLATE', 'C-003_something', 'C-001_a', 'CARD_INDEX.md', 'not-a-card']),
-    'C-0004',
+    P.nextCardId(['C-U0000_TEMPLATE', 'C-003_something', 'C-U0001_a', 'CARD_INDEX.md', 'not-a-card']),
+    'C-U0004',
   );
-  assert.strictEqual(P.nextCardId(['C-042_x', 'C-100_y']), 'C-0101');
-  // 旧3桁 C-00x と新4桁 C-000x の混在でも数値最大 +1
-  assert.strictEqual(P.nextCardId(['C-000_a', 'C-0003_b', 'C-002_c']), 'C-0004');
+  assert.strictEqual(P.nextCardId(['C-042_x', 'C-100_y']), 'C-U0101');
+  // 旧3桁 C-00x（字なし・保険としてU系計上）と新4桁 C-U000x の混在でも数値最大 +1
+  assert.strictEqual(P.nextCardId(['C-000_a', 'C-U0003_b', 'C-002_c']), 'C-U0004');
   // 9999 超は上限を作らず自然に5桁へ拡張
-  assert.strictEqual(P.nextCardId(['C-9999_x']), 'C-10000');
-  assert.strictEqual(P.nextCardId(['C-10000_x', 'C-0003_y']), 'C-10001');
+  assert.strictEqual(P.nextCardId(['C-U9999_x']), 'C-U10000');
+  assert.strictEqual(P.nextCardId(['C-U10000_x', 'C-U0003_y']), 'C-U10001');
+});
+
+test('②b A-series folders do not affect U-series numbering (v1.9)', () => {
+  assert.strictEqual(P.nextCardId(['C-U0000_TEMPLATE', 'C-U0001_something']), 'C-U0002');
+  assert.strictEqual(
+    P.nextCardId(['C-U0000_TEMPLATE', 'C-U0001_something', 'C-A0001_x', 'C-A0002_y', 'C-A9999_z']),
+    'C-U0002',
+    'A系フォルダはU採番に影響しない',
+  );
 });
 
 // ---------------------------------------------------------------------------

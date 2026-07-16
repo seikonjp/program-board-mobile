@@ -346,9 +346,9 @@ export function appendToInbox(text, entry) {
 // ID 採番・slug 化・日付
 // ---------------------------------------------------------------------------
 
-// カード ID（"C-0003" / dir 名 "C-0003_slug"）から数値部を取り出す。C-\d+ を全許容。
+// カード ID（"C-A0003" / dir 名 "C-A0003_slug"）から数値部を取り出す。C-[UA]?\d+ を全許容（v1.9・方向字U/A対応）。
 export function cardIdNum(id) {
-  const m = /C-(\d+)/.exec(id == null ? '' : String(id));
+  const m = /C-[UA]?(\d+)/.exec(id == null ? '' : String(id));
   return m ? parseInt(m[1], 10) : Number.MAX_SAFE_INTEGER;
 }
 
@@ -360,18 +360,21 @@ export function compareCardId(a, b) {
   return String(a).localeCompare(String(b));
 }
 
-// Dropbox の list_folder で得たフォルダ名配列から次の ID を決める（既存最大 +1・4桁0詰め）。
-// パースは C-\d+ を全許容（3桁の旧カードと混在可）。9999 超は padStart(4) が自然に5桁へ拡張。
+// Dropbox の list_folder で得たフォルダ名配列から次の ID を決める（Mac版と同一仕様・v1.9）。
+// アプリからの新規作成＝ユーザー発＝U系連番。A系（AI発）フォルダはU採番に影響しない。
+// U系（新形式 C-U0003_slug）＋字なし旧形式（保険・C-0003_slug 等）をU系連番の計上対象とする。
+// 9999 超は padStart(4) が自然に5桁へ拡張。
 export function nextCardId(names) {
   let max = -1;
   for (const name of (names || [])) {
-    const m = /^C-(\d+)/.exec(name);
-    if (m) {
-      const n = parseInt(m[1], 10);
-      if (n > max) max = n;
-    }
+    const mu = /^C-U(\d+)/.exec(name);
+    const legacy = /^C-(\d+)[_$]/.exec(name);
+    let n = null;
+    if (mu) n = parseInt(mu[1], 10);
+    else if (legacy) n = parseInt(legacy[1], 10);
+    if (n !== null && n > max) max = n;
   }
-  return 'C-' + String(max + 1).padStart(4, '0');
+  return 'C-U' + String(max + 1).padStart(4, '0');
 }
 
 export function slugify(title) {

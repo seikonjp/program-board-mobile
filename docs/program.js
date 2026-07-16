@@ -62,12 +62,12 @@ export function createProgram(dropbox, config) {
       const seg = rel.split('/');
       // _trash 配下は台帳・全タブ・Board・検索から一元除外（走査の入口・v1.7）。
       if (seg[0] === TRASH_DIR) continue;
-      if (ent['.tag'] === 'folder' && seg.length === 1 && /^C-\d+/.test(seg[0])) {
+      if (ent['.tag'] === 'folder' && seg.length === 1 && /^C-[UA]?\d+/.test(seg[0])) {
         cardDirs.push(seg[0]);
         if (!filesByDir.has(seg[0])) filesByDir.set(seg[0], { images: [] });
         continue;
       }
-      if (ent['.tag'] === 'file' && seg.length === 2 && /^C-\d+/.test(seg[0])) {
+      if (ent['.tag'] === 'file' && seg.length === 2 && /^C-[UA]?\d+/.test(seg[0])) {
         const dir = seg[0];
         if (!filesByDir.has(dir)) filesByDir.set(dir, { images: [] });
         const rec = filesByDir.get(dir);
