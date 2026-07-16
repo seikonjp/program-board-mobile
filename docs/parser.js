@@ -582,3 +582,102 @@ export function regenerateIndexContent(existing, cards) {
   }
   return header + '\n\n' + buildIndexTable(cards) + '\n';
 }
+
+// ---------------------------------------------------------------------------
+// Sheets（v2.2・シナリオ/完成定義/RDS の項目レンダリング＋💬コメント＋承認）
+// Mac 版 server.js と挙動互換（同じブロック分割・同じ💬挿入・同じ state 書き換え）。
+// frontmatter 往復・byte 不変は parseCard/serializeCard/setField を再利用。
+// ---------------------------------------------------------------------------
+
+// 見出しテキストの先頭トークン（表示アンカー用のID）。
+export function sheetHeadingId(heading) {
+  return String(heading == null ? '' : heading).trim().split(/\s+/)[0] || '';
+}
+
+// シート本文を項目ブロックへ分割（v2.2）。
+// ブロック開始 = 見出し行（`#`〜`######`）。numbered=true では列0の番号項目（`N. `）も開始。
+// 返す各ブロック: { index, kind:'heading'|'item', level, id, heading, start, end }（start/end は body 内オフセット）。
+export function parseSheetBlocks(body, numbered) {
+  const text = String(body == null ? '' : body);
+  const lines = text.split('\n');
+  const starts = [];
+  let offset = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const hm = /^(#{1,6}) (.*)$/.exec(line);
+    if (hm) {
+      const heading = hm[2].trim();
+      starts.push({ offset, kind: 'heading', level: hm[1].length, heading, id: sheetHeadingId(heading) });
+    } else if (numbered) {
+      const nm = /^(\d+)\. /.exec(line);
+      if (nm) starts.push({ offset, kind: 'item', level: 0, heading: line.trim(), id: nm[1] });
+    }
+    offset += line.length + 1; // +1 = '\n'
+  }
+  const blocks = [];
+  for (let k = 0; k < starts.length; k++) {
+    const s = starts[k];
+    const end = k + 1 < starts.length ? starts[k + 1].offset : text.length;
+    blocks.push({ index: k, kind: s.kind, level: s.level, id: s.id, heading: s.heading, start: s.offset, end });
+  }
+  return blocks;
+}
+
+// 「批評」を含む見出しのブロックは折りたたみ表示対象（解釈＝合理的規約・報告に明記）。
+export function sheetBlockCollapses(block) {
+  return !!block && block.kind === 'heading' && /批評/.test(block.heading || '');
+}
+
+// 項目直下コメント行（v2.2）。書式 = 💬（📱|💻 YYYY-MM-DD HH:MM）: 本文（RDSの💬慣行と互換）。
+export function buildSheetCommentLine(datetime, mark, text) {
+  return '💬（' + mark + ' ' + datetime + '）: ' + String(text == null ? '' : text).replace(/[\r\n]+/g, ' ');
+}
+
+// 指定ブロックの直下（次ブロックの直前・末尾空行の前）へ1行挿入。他部分は byte 不変。
+export function insertSheetCommentInBody(body, blockIndex, line, numbered) {
+  const text = String(body == null ? '' : body);
+  const blocks = parseSheetBlocks(text, numbered);
+  const b = blocks[blockIndex];
+  if (!b) throw new Error('ブロックが見つかりません: ' + blockIndex);
+  const segment = text.slice(b.start, b.end);
+  const trimmed = segment.replace(/\s+$/, '');
+  const tail = segment.slice(trimmed.length); // 末尾空行（次ブロックとの区切り）は保持
+  return text.slice(0, b.start) + trimmed + '\n' + line + tail + text.slice(b.end);
+}
+
+// シート全体（frontmatter往復＋本文）へコメント挿入（v2.2）。
+export function insertSheetComment(text, blockIndex, line, numbered) {
+  const p = parseCard(text);
+  p.body = insertSheetCommentInBody(p.body, blockIndex, line, numbered);
+  return serializeCard(p);
+}
+
+// シートの frontmatter メタ（state / review_card / 有無）。無ければ null（frontmatterなし＝承認UIを出さない）。
+export function parseSheetMeta(text) {
+  const p = parseCard(text);
+  return {
+    hasFrontmatter: p.hasFrontmatter,
+    state: p.raw.state !== undefined ? p.raw.state : null,
+    reviewCard: p.raw.review_card !== undefined ? p.raw.review_card : null,
+  };
+}
+
+// frontmatter の state 行のみ書き換え（他は byte 不変・v2.2）。
+export function setSheetState(text, newState) {
+  const p = parseCard(text);
+  setField(p, 'state', String(newState));
+  return serializeCard(p);
+}
+
+// 開いたシートの表示ペイロード（frontmatterメタ＋序文＋項目ブロック・raw付き）。Mac版 sheetItemPayload と同形。
+export function sheetPayload(text, numbered) {
+  const p = parseCard(text);
+  const raw = parseSheetBlocks(p.body, numbered);
+  const blocks = raw.map((b) => ({
+    index: b.index, kind: b.kind, level: b.level, id: b.id, heading: b.heading,
+    raw: p.body.slice(b.start, b.end).replace(/\s+$/, ''),
+    collapse: sheetBlockCollapses(b),
+  }));
+  const preamble = (raw.length ? p.body.slice(0, raw[0].start) : p.body).replace(/\s+$/, '');
+  return { meta: parseSheetMeta(text), preamble, blocks };
+}

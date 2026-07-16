@@ -12,7 +12,7 @@ import { dirname, resolve } from 'node:path';
 import * as P from '../docs/parser.js';
 import { createDropboxClient, apiArg } from '../docs/dropbox.js';
 import { createProgram } from '../docs/program.js';
-import { enabledViewIds } from '../docs/config.js';
+import { enabledViewIds, enabledGroups, enabledViewIdsForGroup, viewGroup, sheetArchplanRoot, config as APP_CONFIG } from '../docs/config.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const readDoc = (rel) => readFileSync(resolve(HERE, '..', 'docs', rel), 'utf8');
@@ -433,13 +433,24 @@ test('⑪ 混在桁 ID は数値順に採番・ソートされる', () => {
 // ---------------------------------------------------------------------------
 // ⑫ タブ順（v1.4）＋ Report タブ抽出（type=report・cardsForType 再利用）
 // ---------------------------------------------------------------------------
-test('⑫ タブ順は Board/Reference/Knowledge/Consult/Decision/Report/Acceptance(=tray)/Memo', () => {
-  // enabledViewIds は config.views の有効順で ID を返す（tray の表示名 Acceptance）。
+test('⑫ 最上位ナビ4群（v2.2）＋Cards群の第2階層タブ順', () => {
+  // 最上位ナビ = Cards / Sheets / Views / Sessions（この順）
+  assert.deepStrictEqual(enabledGroups().map((g) => g.id), ['cards', 'sheets', 'views', 'sessions'], '群の順');
+  assert.deepStrictEqual(enabledGroups().map((g) => g.label), ['Cards', 'Sheets', 'Views', 'Sessions'], '群のラベル');
+  // Cards 群の第2階層タブ順（v1.8 の8タブを内包）
   assert.deepStrictEqual(
-    enabledViewIds(),
+    enabledViewIdsForGroup('cards'),
     ['board', 'reference', 'knowledge', 'consult', 'decision', 'report', 'tray', 'memo'],
-    'タブ順（v1.8 で Quick→Memo 改名・末尾は memo）',
+    'Cards 群の第2階層タブ順',
   );
+  // 各群の単一ビュー・所属判定
+  assert.deepStrictEqual(enabledViewIdsForGroup('sheets'), ['sheets']);
+  assert.deepStrictEqual(enabledViewIdsForGroup('views'), ['views']);
+  assert.deepStrictEqual(enabledViewIdsForGroup('sessions'), ['sessions']);
+  assert.strictEqual(viewGroup('board'), 'cards');
+  assert.strictEqual(viewGroup('sheets'), 'sheets');
+  // enabledViewIds は全群のビューを config 順で返す（動的 import 用）
+  assert.deepStrictEqual(enabledViewIds(), ['board', 'reference', 'knowledge', 'consult', 'decision', 'report', 'tray', 'memo', 'sheets', 'views', 'sessions']);
 });
 
 test('⑫b cardsForType(type=report) は report カードのみ抽出（Report タブ）', () => {
@@ -772,13 +783,13 @@ function makeMockDropbox(initial) {
   }
   return { fetchImpl, store };
 }
-function mockProgram(initial) {
+function mockProgram(initial, configOverride) {
   const { fetchImpl, store } = makeMockDropbox(initial);
   const client = createDropboxClient({
     clientId: 't', fetchImpl,
     tokens: { access_token: 'a', refresh_token: 'r', expires_at: Date.now() + 3600000 },
   });
-  return { program: createProgram(client, { programRoot: '/ArchPlan/Program' }), store };
+  return { program: createProgram(client, { programRoot: '/ArchPlan/Program', ...(configOverride || {}) }), store };
 }
 
 // ---------------------------------------------------------------------------
@@ -1048,4 +1059,139 @@ test('㉗ loadCards includes _archive with archived flag; excluded from index (v
   await program.regenerateIndex();
   const idx = store.get('/ArchPlan/Program/Cards/CARD_INDEX.md');
   assert.ok(idx && idx.content.includes('C-0001') && !idx.content.includes('C-A0001'), 'CARD_INDEX はアーカイブ除外');
+});
+
+// ---------------------------------------------------------------------------
+// ㉘ Sheets: 項目ブロック分割＋💬コメント挿入位置と byte 不変（parser・Mac版と挙動互換・v2.2）
+// ---------------------------------------------------------------------------
+test('㉘ sheet blocks (heading + numbered) and 💬 comment insertion + byte-invariance (v2.2)', () => {
+  // (a) 見出しブロック（シナリオ/完成定義形式）
+  const scen = '# SC-001 タイトル\n\n> メタ\n\n## ステップ\n\n### SC-001-S01 一つ目\n- 状況: x\n\n### SC-001-S02 二つ目\n- 状況: y\n';
+  const hb = P.parseSheetBlocks(scen, false);
+  assert.deepStrictEqual(hb.map((b) => b.id), ['SC-001', 'ステップ', 'SC-001-S01', 'SC-001-S02'], '見出しの先頭トークンがID');
+  assert.ok(hb.every((b) => b.kind === 'heading'));
+
+  // (b) 番号項目ブロック（RDS形式）
+  const rds = '## REQ-DOC-001 一意性\n〔AI抽出〕\n\n1. [人間] item one\n- 補足1\n  💬 ok\n\n2. [AI] item two\n- 補足2\n\n';
+  const nb = P.parseSheetBlocks(rds, true);
+  assert.deepStrictEqual(nb.map((b) => ({ kind: b.kind, id: b.id })),
+    [{ kind: 'heading', id: 'REQ-DOC-001' }, { kind: 'item', id: '1' }, { kind: 'item', id: '2' }],
+    '見出し1＋番号項目2（列0の N. のみ・- 補足や 💬 は分割しない）');
+
+  // (c) 💬 コメント行の書式（📱・固定）
+  const line = P.buildSheetCommentLine('2026-07-16 14:30', '📱', '本文  改\n行');
+  assert.strictEqual(line, '💬（📱 2026-07-16 14:30）: 本文  改 行', '💬（📱 日時）: 本文（改行は空白化）');
+
+  // (d) 挿入位置 = 当該項目の直下・次項目の直前。他部分は byte 不変。
+  const i1 = nb.findIndex((b) => b.kind === 'item' && b.id === '1');
+  const out = P.insertSheetCommentInBody(rds, i1, line, true);
+  const expected = '## REQ-DOC-001 一意性\n〔AI抽出〕\n\n1. [人間] item one\n- 補足1\n  💬 ok\n' + line + '\n\n2. [AI] item two\n- 補足2\n\n';
+  assert.strictEqual(out, expected, '項目1の末尾（💬 ok の直後・空行の前）に挿入');
+  assert.strictEqual(out.replace('\n' + line, ''), rds, '挿入行を除けば元と byte 一致');
+
+  // (e) frontmatter は byte 不変（本文のみ変わる）
+  const withFm = '---\nid: SC-001\nstate: reviewed\nreview_card: C-A0001\n---\n\n### SC-001-S01 a\n- x\n\n### SC-001-S02 b\n- y\n';
+  const blocks = P.parseSheetBlocks(P.parseCard(withFm).body, false);
+  const i0 = blocks.findIndex((b) => b.id === 'SC-001-S01');
+  const out2 = P.insertSheetComment(withFm, i0, line, false);
+  assert.ok(out2.startsWith('---\nid: SC-001\nstate: reviewed\nreview_card: C-A0001\n---\n'), 'frontmatter は byte 不変');
+  assert.ok(out2.includes('- x\n' + line + '\n'), 'S01 の直下に挿入');
+
+  // (f) frontmatter メタ・state 行のみ書き換え・折りたたみ判定・sheetPayload
+  assert.deepStrictEqual(P.parseSheetMeta('# no fm\nx\n'), { hasFrontmatter: false, state: null, reviewCard: null });
+  assert.deepStrictEqual(P.parseSheetMeta(withFm), { hasFrontmatter: true, state: 'reviewed', reviewCard: 'C-A0001' });
+  assert.strictEqual(P.setSheetState(withFm, 'approved'), withFm.replace('state: reviewed', 'state: approved'), 'state 行のみ approved');
+  const critique = '## 批評履歴\n- 指摘1\n\n### 通常\n- x\n';
+  const cb = P.parseSheetBlocks(critique, false);
+  assert.strictEqual(P.sheetBlockCollapses(cb[0]), true, '「批評」見出しは折りたたみ対象');
+  assert.strictEqual(P.sheetBlockCollapses(cb[1]), false);
+  const pay = P.sheetPayload(withFm, false);
+  assert.strictEqual(pay.blocks.length, 2);
+  assert.ok(pay.blocks[0].raw.includes('### SC-001-S01'), 'blocks に raw が入る');
+});
+
+// ---------------------------------------------------------------------------
+// ㉙ Sheets: sheetArchplanRoot 導出＋program.listSheets/readSheet/addSheetComment/approveSheet（v2.2）
+// ---------------------------------------------------------------------------
+test('㉙ program sheets: list/read/comment/approve with path derivation and activation (v2.2)', async () => {
+  // 親導出: '/ArchPlan/Program' → '/ArchPlan'
+  assert.strictEqual(sheetArchplanRoot('/ArchPlan/Program'), '/ArchPlan');
+  assert.strictEqual(sheetArchplanRoot('/ArchPlan/Program/'), '/ArchPlan');
+
+  const scDir = '/ArchPlan/Docs/ConOps/Scenarios';
+  const tdDir = '/ArchPlan/archplan-core/Docs/TestDefinitions';
+  const rdsDir = '/ArchPlan/Projects/RequirementManagement/Works/RDS';
+  const scText = '---\nid: SC-001\nstate: reviewed\nreview_card: C-A0001\n---\n\n### SC-001-S01 a\n- x\n\n### SC-001-S02 b\n- y\n';
+  const reviewCard = '/ArchPlan/Program/Cards/C-A0001_sc/card.md';
+  const reviewMd = '---\nid: C-A0001\ntitle: SC-001承認\ndirection: claude-to-user\ntype: review\ntags: []\nsurface: ""\nstatus: review\ncreated: 2026-07-16\n---\n\n## 本文\n\nx\n\n## 処理記録\n\n- ↳ 2026-07-16 作成\n';
+  const { program, store } = mockProgram({
+    [scDir + '/SC-001.md']: scText,
+    [scDir + '/_TEMPLATE.md']: '# t\n',
+    [scDir + '/SC_MAP.md']: '# map\n',
+    [tdDir + '/METHOD.md']: '# m\n',
+    [tdDir + '/GLOSSARY.md']: '# g\n',
+    [tdDir + '/features/玄関配置.md']: '# 玄関\n',
+    [rdsDir + '/RDS_DOC.md']: '## REQ-DOC-001 x\n\n1. [人間] one\n- s\n\n2. [AI] two\n\n',
+    [rdsDir + '/OTHER.md']: '# o\n',
+    [reviewCard]: reviewMd,
+  }, { sheetSources: APP_CONFIG.sheetSources });
+
+  // (a) listSheets: 除外規則が効く（_TEMPLATE/SC_MAP/METHOD*/_・OTHER 除外・features は再帰で拾う）
+  const list = await program.listSheets();
+  const byId = Object.fromEntries(list.map((s) => [s.id, s.files.map((f) => f.file)]));
+  assert.deepStrictEqual(byId.scenario, ['SC-001.md'], 'scenario は SC-*.md のみ');
+  assert.deepStrictEqual(byId.completion, ['GLOSSARY.md', 'features/玄関配置.md'], 'completion は再帰＋METHOD*/_ 除外');
+  assert.deepStrictEqual(byId.rds, ['RDS_DOC.md'], 'rds は RDS_*.md のみ');
+
+  // (b) readSheet: 番号項目ブロック＋メタ
+  const rd = await program.readSheet('rds', 'RDS_DOC.md');
+  assert.strictEqual(rd.blocks.filter((b) => b.kind === 'item').length, 2, 'RDS は番号項目2');
+  const sc = await program.readSheet('scenario', 'SC-001.md');
+  assert.deepStrictEqual(sc.meta, { hasFrontmatter: true, state: 'reviewed', reviewCard: 'C-A0001' });
+
+  // (c) addSheetComment: 項目直下へ📱コメント（rev リトライ経由・他部分 byte 不変）
+  const i1 = rd.blocks.findIndex((b) => b.kind === 'item' && b.id === '1');
+  await program.addSheetComment('rds', 'RDS_DOC.md', i1, 'これで良い');
+  const rdsAfter = store.get(rdsDir + '/RDS_DOC.md').content;
+  assert.ok(/1\. \[人間\] one\n- s\n💬（📱 .+?）: これで良い\n\n2\. \[AI\]/.test(rdsAfter), '項目1直下に📱コメント挿入');
+
+  // (d) パスガード: 対象外/.. を拒否
+  await assert.rejects(program.readSheet('scenario', '../../evil.md'), /不正|対象外/);
+  await assert.rejects(program.readSheet('completion', 'METHOD.md'), /対象外/, '除外ファイル直接読取り拒否');
+
+  // (e) 承認活性条件: draft/review_card無し/frontmatter無しは不可
+  store.set(scDir + '/SC-001.md', { content: scText.replace('state: reviewed', 'state: draft'), rev: 'rx' });
+  await assert.rejects(program.approveSheet('scenario', 'SC-001.md'), /reviewed/, 'draft は承認不可');
+  store.set(scDir + '/SC-001.md', { content: '# no fm\n### x\n- y\n', rev: 'ry' });
+  await assert.rejects(program.approveSheet('scenario', 'SC-001.md'), /frontmatter/, 'frontmatter無しは承認不可');
+
+  // (f) 正常承認: reviewカードOK+consumed / シート state approved
+  store.set(scDir + '/SC-001.md', { content: scText, rev: 'rz' });
+  const res = await program.approveSheet('scenario', 'SC-001.md');
+  assert.ok(res.ok && res.reviewCard === 'C-A0001');
+  const cardAfter = store.get(reviewCard).content;
+  assert.ok(/^status: consumed$/m.test(cardAfter), 'reviewカードが consumed');
+  assert.ok(/- 応答（あなた・📱 .+?）: OK/.test(cardAfter), 'reviewカードへ OK 応答行');
+  assert.ok(/^state: approved$/m.test(store.get(scDir + '/SC-001.md').content), 'シート state approved');
+});
+
+// ---------------------------------------------------------------------------
+// ㉚ Sheets view: 群配線・ソース一覧・項目コメント・承認の配線（ソース文字列検証）（v2.2）
+// ---------------------------------------------------------------------------
+test('㉚ sheets view + group wiring (source-text checks) (v2.2)', () => {
+  const sheets = readDoc('views/sheets.js');
+  assert.ok(sheets.includes("registerView({ id: 'sheets'"), 'sheets ビューが登録される');
+  assert.ok(sheets.includes('ctx.program.listSheets()') && sheets.includes('ctx.program.readSheet('), '一覧＋開くを program に委譲');
+  assert.ok(sheets.includes('ctx.program.addSheetComment(') && sheets.includes('ctx.program.approveSheet('), 'コメント＋承認を program に委譲');
+  assert.ok(!sheets.includes('editSheet') && !sheets.includes('replaceUnderHeading') && !sheets.includes('editCard'), '本文編集UIは提供しない（コメントのみ）');
+  assert.ok(sheets.includes("st === 'reviewed'") && sheets.includes('meta.reviewCard'), '承認ボタンは review_card+reviewed で活性');
+  assert.ok(sheets.includes('block.collapse') && sheets.includes('details'), '批評ブロックは details で折りたたみ');
+
+  // 群配線（app.js）
+  const app = readDoc('app.js');
+  assert.ok(app.includes('buildGroupbar') && app.includes('enabledViewIdsForGroup(ctx.state.activeGroup)'), 'buildTabbar は群でフィルタ');
+  assert.ok(app.includes('function setGroup('), '群切替 setGroup がある');
+
+  // 準備中プレースホルダ
+  assert.ok(readDoc('views/views.js').includes('準備中') && readDoc('views/sessions.js').includes('準備中'), 'Views/Sessions は準備中');
 });

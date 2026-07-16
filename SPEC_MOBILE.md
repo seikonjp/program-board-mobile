@@ -21,7 +21,9 @@
 - `CARD_INDEX.md`: カード書込後に表部分のみ再生成（ヘッダ`>`引用・見出し保持・Mac版と同一ロジック）
 - 読み取り専用: `DECISION_QUEUE.md`・`CONTROL.md`
 
-## 2. 画面（タブ4+設定・iPadは広幅で一覧+詳細の2ペイン）
+## 2. 画面（最上位ナビ4群＋設定・iPadは広幅で一覧+詳細の2ペイン）
+
+> **build20（Phase 2）**: 最上位ナビを4群へ再編＝**Cards**（従来の Board/type別/Review/Memo を第2階層に内包）／**Sheets**（新設）／**Views**（Phase 3・準備中）／**Sessions**（Phase 4・準備中）。各view定義に `group` 属性・`buildTabbar` を2階層化（群バー＋第2階層タブ）。**Sheets**＝シナリオ/完成定義/RDS を項目単位で表示（一覧はファイル名のみ・本文は開いた時DL）＋項目直下に💬コメント（`updateTextFileWithRetry`・本文編集なし）＋frontmatter `state`/`review_card` のシートに状態チップ＋承認ボタン（reviewed のみ活性→reviewカードOK＋consumed／シートstate→approved）。ソースパスは `config.js`（programRoot の親＝`/ArchPlan` から導出）。
 
 1. **ボード**: 状態5列（狭幅ではセグメント切替・広幅ではカンバン）。カード=サムネ+タイトル+タグ。**新規作成: 「写真を選ぶ」ボタン（カメラロール/カメラ・複数可）＋テキスト欄＋作成**——モバイルの主動線なので最短タップ数で
 2. **検収トレイ**: type=report/reviewかつstatus=reviewを大きなスクショ付きで縦並び・**OK／NG（コメント欄）／あとで**の3ボタン（type/status値=review・カード詳細の操作モードはrespond〔二重意味回避〕。日本語表示「検収待ち」「検収」等は不変）

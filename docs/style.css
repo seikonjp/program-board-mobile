@@ -471,3 +471,69 @@ textarea.op-comment { min-height: 56px; resize: vertical; }
   .btn-later { background: #2c3444; color: #d8c98a; }
   .segment { background: var(--surface); }
 }
+
+/* ---- 最上位ナビ（4群・v2.2） ---- */
+.groupbar {
+  position: sticky;
+  top: var(--header-h);
+  z-index: 15;
+  display: flex;
+  gap: 6px;
+  padding: 8px 12px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.groupbar .group {
+  flex: 0 0 auto;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--ink);
+  padding: 6px 16px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  min-height: 34px;
+}
+.groupbar .group.is-active { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+
+/* 準備中プレースホルダ（Views/Sessions） */
+.placeholder { padding: 40px 16px; color: var(--ink-soft); }
+.placeholder h2 { margin: 0 0 8px; color: var(--ink); }
+
+/* ---- Sheets（v2.2） ---- */
+.sheets-sources { display: flex; flex-direction: column; gap: 16px; padding: 4px 0; }
+.sheet-source { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; }
+.sheet-source-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.sheet-source-label { font-weight: 700; }
+.sheet-source-count { font-size: 11px; color: var(--ink-soft); background: var(--bg); border-radius: 999px; padding: 1px 8px; }
+.sheet-file-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.sheet-file {
+  border: 1px solid var(--line); background: var(--bg); color: var(--ink);
+  padding: 7px 12px; border-radius: 8px; cursor: pointer; font-size: 13px; font-family: inherit;
+}
+
+.sheets-detail-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.sheet-title { font-weight: 700; font-size: 15px; word-break: break-all; }
+.sheet-header-meta { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+.chip-sheet-state { font-weight: 700; }
+.chip-sheet-state.state-draft { background: #eef1f6; color: #556; }
+.chip-sheet-state.state-reviewed { background: #fff2d8; color: #8a6d1f; }
+.chip-sheet-state.state-approved { background: #dcefe3; color: #1f7a4d; }
+.sheet-approve { padding: 8px 16px; font-size: 14px; }
+.sheet-approve:disabled { opacity: .5; }
+
+.sheet-body { display: flex; flex-direction: column; gap: 4px; }
+.sheet-preamble, .sheet-block-text {
+  white-space: pre-wrap; word-break: break-word; margin: 0;
+  font-family: inherit; font-size: 13px; color: var(--ink); line-height: 1.6;
+}
+.sheet-block { border-top: 1px solid var(--line); padding: 10px 0; }
+.sheet-block-head { margin: 0 0 6px; font-size: 15px; }
+.sheet-block-collapse { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; }
+.sheet-block-summary { cursor: pointer; font-weight: 700; color: var(--later); }
+.sheet-comment-row { display: flex; gap: 6px; margin-top: 8px; align-items: flex-start; }
+textarea.sheet-comment-input { flex: 1; min-height: 40px; resize: none; }
+.sheet-comment-send { white-space: nowrap; }

@@ -6,6 +6,7 @@
 // 「正はファイル」「削除しない」「rev 競合はリトライ」の規律をここで実装する。
 
 import * as P from './parser.js';
+import { sheetArchplanRoot } from './config.js';
 
 const MOBILE_MARK = '（📱）'; // モバイル発の追記に付す出所マーク（INBOX 等）
 const RESP_MARK = '📱';      // 応答行/完了確定行に埋め込む出所マーク（v2.1）
@@ -464,10 +465,99 @@ export function createProgram(dropbox, config) {
     return join(cardsRoot, dir, file);
   }
 
+  // ---- Sheets（v2.2・シナリオ/完成定義/RDS の項目レンダリング＋💬コメント＋承認） ----
+  // ベースルート = programRoot の親（'/ArchPlan/Program' → '/ArchPlan'）＋ソース別サブパス。
+  const archplanRoot = sheetArchplanRoot(root);
+  const sheetSources = config.sheetSources || [];
+
+  function sheetSourceById(id) { return sheetSources.find((s) => s.id === id) || null; }
+  function sheetBase(source) { return join(archplanRoot, source.sub); }
+  function sheetFileAllowed(source, name) {
+    const ok = source.match ? new RegExp(source.match).test(name) : true;
+    const ng = source.exclude ? new RegExp(source.exclude).test(name) : false;
+    return ok && !ng;
+  }
+  // ソース内相対パス file のガード（.. や空要素を拒否・match/exclude 再検証＝任意パス拒否）。
+  function sheetAssertFile(source, file) {
+    const f = String(file || '');
+    if (f === '' || f.split('/').some((s) => s === '..' || s === '')) throw new Error('不正なファイルパス: ' + file);
+    if (!sheetFileAllowed(source, basename(f))) throw new Error('対象外のファイル: ' + file);
+  }
+
+  // 全ソースの一覧（一覧はファイル名のみ＝本文は開いた時に取得・通信量配慮）。未存在ディレクトリは空一覧で無事故。
+  async function listSheets() {
+    const out = [];
+    for (const source of sheetSources) {
+      const base = sheetBase(source);
+      let entries = [];
+      try {
+        entries = await dropbox.listFolder(base, { recursive: !!source.recurse });
+      } catch (e) {
+        if (!isNotFound(e)) throw e; // 未存在なら空一覧
+        entries = [];
+      }
+      const files = [];
+      for (const ent of entries) {
+        if (ent['.tag'] !== 'file') continue;
+        const rel = ent.path_display.slice(base.length + 1);
+        if (!sheetFileAllowed(source, basename(rel))) continue;
+        files.push(rel);
+      }
+      files.sort();
+      out.push({ id: source.id, label: source.label, files: files.map((f) => ({ file: f })) });
+    }
+    return out;
+  }
+
+  // 開いたシートを取得（本文DL→frontmatterメタ＋序文＋項目ブロック）。
+  async function readSheet(sourceId, file) {
+    const source = sheetSourceById(sourceId);
+    if (!source) throw new Error('不明なソース: ' + sourceId);
+    sheetAssertFile(source, file);
+    const { text } = await dropbox.download(join(sheetBase(source), file));
+    return { source: sourceId, file, ...P.sheetPayload(text, !!source.numbered) };
+  }
+
+  // 項目直下へ💬コメント追記（updateTextFileWithRetry＝rev 楽観ロック・他部分は byte 不変）。
+  async function addSheetComment(sourceId, file, blockIndex, comment) {
+    const source = sheetSourceById(sourceId);
+    if (!source) throw new Error('不明なソース: ' + sourceId);
+    sheetAssertFile(source, file);
+    const clean = String(comment == null ? '' : comment).replace(/[\r\n]+/g, ' ').trim();
+    if (clean === '') throw new Error('コメントが空です');
+    const line = P.buildSheetCommentLine(P.nowStamp(), '📱', clean);
+    const p = join(sheetBase(source), file);
+    await dropbox.updateTextFileWithRetry(p, (text) => P.insertSheetComment(text, blockIndex, line, !!source.numbered));
+    return readSheet(sourceId, file);
+  }
+
+  // 承認（review_card があり state: reviewed のときのみ）。
+  // (a) reviewカードへ OK＋consumed化（Phase1 の respondCard を再利用）。(b) シート state 行のみ approved へ。
+  async function approveSheet(sourceId, file) {
+    const source = sheetSourceById(sourceId);
+    if (!source) throw new Error('不明なソース: ' + sourceId);
+    sheetAssertFile(source, file);
+    const p = join(sheetBase(source), file);
+    const { text } = await dropbox.download(p);
+    const meta = P.parseSheetMeta(text);
+    if (!meta.hasFrontmatter || meta.state == null) throw new Error('このシートは承認対象外です（frontmatterなし）');
+    const state = String(meta.state).trim();
+    const reviewCard = meta.reviewCard ? String(meta.reviewCard).trim() : '';
+    if (!reviewCard) throw new Error('review_card が設定されていません');
+    if (state !== 'reviewed') throw new Error('承認できるのは state: reviewed のときのみです（現在: ' + state + '）');
+    await respondCard(reviewCard, 'ok', {});                               // (a)
+    await dropbox.updateTextFileWithRetry(p, (t) => P.setSheetState(t, 'approved')); // (b)
+    return { ok: true, reviewCard, sheet: await readSheet(sourceId, file) };
+  }
+
   return {
     root,
     cardsRoot,
     loadCards,
+    listSheets,
+    readSheet,
+    addSheetComment,
+    approveSheet,
     downloadImage,
     createCard,
     respondCard,

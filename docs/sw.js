@@ -4,7 +4,7 @@
 // データ（Dropbox API 応答）は一切キャッシュしない＝常に最新をネットワークから取得。
 // オフライン時の閲覧は app 側が localStorage に保持した最終取得データで行う。
 
-const CACHE = 'pbm-shell-v19';
+const CACHE = 'pbm-shell-v20';
 
 const SHELL = [
   './',
@@ -27,6 +27,9 @@ const SHELL = [
   './views/tray.js',
   './views/memo.js',
   './views/decision.js',
+  './views/sheets.js',
+  './views/views.js',
+  './views/sessions.js',
   './icons/icon-192.png',
   './icons/icon-512.png',
 ];

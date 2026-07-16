@@ -5,7 +5,7 @@
 // 責務: 起動 / OAuth リダイレクト処理 / タブ構築 / ポーリング / 設定 / 画像遅延読込 /
 //       接続オーバーレイ / Service Worker 登録。画面の中身は views/*.js が持つ。
 
-import { getConfig, saveConfigOverride, enabledViewIds } from './config.js';
+import { getConfig, saveConfigOverride, enabledViewIds, enabledGroups, enabledViewIdsForGroup, viewGroup } from './config.js';
 import * as P from './parser.js';
 import {
   createDropboxClient, loadTokens, saveTokens, clearTokens,
@@ -132,7 +132,7 @@ const ctx = {
     typeLabel: P.typeLabel,
     normalizeType: P.normalizeType,
   },
-  state: { cards: [], cardDirs: [], activeTab: null, online: true, connected: false },
+  state: { cards: [], cardDirs: [], activeGroup: 'cards', activeTab: null, online: true, connected: false },
   el,
   toast,
   attachImage,
@@ -141,10 +141,11 @@ const ctx = {
   reload: async () => { cardCache = new Map(); await refresh({ quiet: true }); },
 };
 
-// ---- ビュー生成・タブ ----
+// ---- ビュー生成・タブ（最上位ナビ4群＋第2階層タブ・v2.2） ----
 const created = {}; // id -> { def, el }
 const viewHost = () => $('#view-host');
 const tabbar = () => $('#tabbar');
+const groupbar = () => $('#groupbar');
 
 function ensureCreated(id) {
   if (created[id]) return created[id];
@@ -159,10 +160,24 @@ function ensureCreated(id) {
   return created[id];
 }
 
+// 最上位ナビ（群タブ）を構築（v2.2）。
+function buildGroupbar() {
+  const bar = groupbar();
+  bar.innerHTML = '';
+  for (const g of enabledGroups()) {
+    const btn = el('button', 'group');
+    btn.dataset.group = g.id;
+    btn.textContent = g.label;
+    btn.onclick = () => setGroup(g.id);
+    bar.appendChild(btn);
+  }
+}
+
+// 第2階層タブ（アクティブ群のビューのみ）を構築（v2.2）。
 function buildTabbar() {
   const bar = tabbar();
   bar.innerHTML = '';
-  const views = listViews(enabledViewIds());
+  const views = listViews(enabledViewIdsForGroup(ctx.state.activeGroup));
   for (const def of views) {
     const btn = el('button', 'tab');
     btn.dataset.id = def.id;
@@ -187,16 +202,28 @@ function updateBadges() {
   }
 }
 
+// 群を切替（第2階層タブを再構築し、先頭ビュー（または preferId）を表示）。
+function setGroup(groupId, preferId) {
+  ctx.state.activeGroup = groupId;
+  for (const btn of groupbar().children) btn.classList.toggle('is-active', btn.dataset.group === groupId);
+  buildTabbar();
+  const ids = enabledViewIdsForGroup(groupId);
+  const target = (preferId && ids.includes(preferId)) ? preferId : ids[0];
+  if (target) setTab(target);
+}
+
 function setTab(id) {
-  const ids = enabledViewIds();
+  // 別群のタブを指した場合は群ごと切り替える（setGroup 内で activeGroup を先に設定するため再帰しない）。
+  const g = viewGroup(id);
+  if (g !== ctx.state.activeGroup) { setGroup(g, id); return; }
+  const ids = enabledViewIdsForGroup(g);
   if (!getView(id)) id = ids[0];
   ctx.state.activeTab = id;
-  for (const vid of ids) {
-    const c = ensureCreated(vid);
-    if (c) c.el.hidden = vid !== id;
-  }
-  for (const btn of tabbar().children) btn.classList.toggle('is-active', btn.dataset.id === id);
+  // 生成済みビューは全て隠し、現在のみ表示（群跨ぎでも重複表示しない）。
+  for (const vid of Object.keys(created)) created[vid].el.hidden = true;
   const cur = ensureCreated(id);
+  if (cur) cur.el.hidden = false;
+  for (const btn of tabbar().children) btn.classList.toggle('is-active', btn.dataset.id === id);
   if (cur && cur.def.onShow) cur.def.onShow(ctx);
 }
 
@@ -479,7 +506,10 @@ async function boot() {
   }
   if (justConnected || vNg.length) flowLog('ビュー読込 ' + vOk + '/' + enabledViewIds().length + (vNg.length ? ' 失敗=' + vNg.join('; ') : ''));
   try {
+    buildGroupbar();
+    ctx.state.activeGroup = viewGroup(config.defaultTab);
     buildTabbar();
+    for (const btn of groupbar().children) btn.classList.toggle('is-active', btn.dataset.group === ctx.state.activeGroup);
   } catch (e) { flowLog('タブ構築で例外: ' + (e && e.message || e)); }
 
   // メモ↔カードの相互フック（requestNewCard / requestNewMemo）と setTab を確実に配線するため、
