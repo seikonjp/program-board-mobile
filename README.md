@@ -34,7 +34,7 @@ node --test
 ```
 
 `test/mobile.test.mjs` に4件:
-1. カード frontmatter 往復無損失（C-000 相当 fixture）
+1. カード frontmatter 往復無損失（C-U0000 相当 fixture）
 2. ID 採番（list_folder 名から）
 3. INBOX 追記の影響範囲（§1 のみ）＋ 409 競合リトライ（fetch モック）
 4. CARD_INDEX 再生成（ヘッダ保持・表のみ差し替え）

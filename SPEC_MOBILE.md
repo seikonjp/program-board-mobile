@@ -14,7 +14,7 @@
 
 ## 1. データ規約（Mac版SPEC.mdと同一・往復無損失）
 
-- カード=`Cards/C-NNN_slug/card.md`（YAML frontmatter＋「## 本文」「## 注釈（私が記入）」「## 処理記録」）＋同フォルダ画像。書式見本=`Cards/C-000_TEMPLATE/card.md`（必読）
+- カード=`Cards/C-〈方向1字〉〈4桁連番〉_slug/card.md`（U=ユーザー発／A=AI発・方向別連番。YAML frontmatter＋「## 本文」「## 注釈（私が記入）」「## 処理記録」）＋同フォルダ画像。書式見本=`Cards/C-U0000_TEMPLATE/card.md`（必読）
 - 新規カード: list_folderで既存最大ID+1（3桁0詰め）・slugはtitleから安全化・status=new・画像はカメラロールから選択しJPEG/PNGのままアップロード（長辺2048px超は縮小してよい）
 - INBOX追記: download→§1末尾に`- YYYY-MM-DD 本文（📱）`を追記→**rev指定のupdate mode**でupload（409競合時は再download→再適用・最大3回）。§2/§3は不変
 - 検収: card.mdの「## 処理記録」へ`- ↳ YYYY-MM-DD 検収=OK/NG（コメント）/あとで（📱）`追記＋frontmatter status更新（OK→consumed／NG→annotated・コメント必須／あとで→acceptanceのまま）。rev指定update
@@ -40,7 +40,7 @@
 
 ## 4. 品質・受け入れ条件
 
-- `node --test`（開発機で実行）: parser往復無損失（C-000相当fixture）・ID採番・INBOX追記の影響範囲・CARD_INDEX再生成 の4件緑（Dropbox API層はfetchモックで単体テスト）
+- `node --test`（開発機で実行）: parser往復無損失（C-U0000相当fixture）・ID採番・INBOX追記の影響範囲・CARD_INDEX再生成 の4件緑（Dropbox API層はfetchモックで単体テスト）
 - 実機確認前提の**セットアップ手順書 `README_SETUP.md`** を必ず作成: ①Dropbox Appの登録手順（App console・scopes=files.metadata.read/files.content.read/files.content.write・redirect URIの設定・client_id取得）②GitHub Pages公開手順（公開されるのはUIコードのみである旨明記）③iPhone/iPadホーム画面追加手順④初回接続の流れ。**ユーザーが1人で15分で終わる粒度**で
 - git init・一括コミット（v1・テスト結果記載）
 - **禁止**: 外部依存・CDN・analytics・Dropbox削除API・Program/規約外の書式変更
