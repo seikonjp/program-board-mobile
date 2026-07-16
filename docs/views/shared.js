@@ -182,7 +182,7 @@ function addOperations(ctx, wrap, card) {
     ops.appendChild(editBtn);
   }
 
-  if (mode === 'review') {
+  if (mode === 'respond') {
     // OK/NG トグル（どちらか一方 or 無選択・同じボタン再タップで解除）。表示のみ＝保存しない（画面内のみ）。
     const row = h('div', 'op-toggle-row');
     const okBtn = h('button', 'op-toggle op-ok', 'OK');

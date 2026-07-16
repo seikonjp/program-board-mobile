@@ -17,14 +17,14 @@
 - カード=`Cards/C-〈方向1字〉〈4桁連番〉_slug/card.md`（U=ユーザー発／A=AI発・方向別連番。YAML frontmatter＋「## 本文」「## 注釈（私が記入）」「## 処理記録」）＋同フォルダ画像。書式見本=`Cards/C-U0000_TEMPLATE/card.md`（必読）
 - 新規カード: list_folderで既存最大ID+1（3桁0詰め）・slugはtitleから安全化・status=new・画像はカメラロールから選択しJPEG/PNGのままアップロード（長辺2048px超は縮小してよい）
 - INBOX追記: download→§1末尾に`- YYYY-MM-DD 本文（📱）`を追記→**rev指定のupdate mode**でupload（409競合時は再download→再適用・最大3回）。§2/§3は不変
-- 検収: card.mdの「## 処理記録」へ`- ↳ YYYY-MM-DD 検収=OK/NG（コメント）/あとで（📱）`追記＋frontmatter status更新（OK→consumed／NG→annotated・コメント必須／あとで→acceptanceのまま）。rev指定update
+- 検収: card.mdの「## 処理記録」へ`- ↳ YYYY-MM-DD 検収=OK/NG（コメント）/あとで（📱）`追記＋frontmatter status更新（OK→consumed／NG→annotated・コメント必須／あとで→reviewのまま）。rev指定update
 - `CARD_INDEX.md`: カード書込後に表部分のみ再生成（ヘッダ`>`引用・見出し保持・Mac版と同一ロジック）
 - 読み取り専用: `DECISION_QUEUE.md`・`CONTROL.md`
 
 ## 2. 画面（タブ4+設定・iPadは広幅で一覧+詳細の2ペイン）
 
 1. **ボード**: 状態5列（狭幅ではセグメント切替・広幅ではカンバン）。カード=サムネ+タイトル+タグ。**新規作成: 「写真を選ぶ」ボタン（カメラロール/カメラ・複数可）＋テキスト欄＋作成**——モバイルの主動線なので最短タップ数で
-2. **検収トレイ**: type=report/acceptanceかつstatus=acceptanceを大きなスクショ付きで縦並び・**OK／NG（コメント欄）／あとで**の3ボタン
+2. **検収トレイ**: type=report/reviewかつstatus=reviewを大きなスクショ付きで縦並び・**OK／NG（コメント欄）／あとで**の3ボタン（type/status値=review・カード詳細の操作モードはrespond〔二重意味回避〕。日本語表示「検収待ち」「検収」等は不変）
 3. **クイック登録**: 1行テキスト→INBOXへ（起動直後にこのタブを開く設定可＝思いつき最速登録）
 4. **裁定ビュー**: DECISION_QUEUE.md整形表示（読み取り専用）
 - 設定画面: Dropbox接続（PKCE認可・切断）・Programルートパス・起動タブ選択

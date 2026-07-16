@@ -10,7 +10,7 @@
 // 表示ラベル（純粋データ・UI/索引で共用）
 // ---------------------------------------------------------------------------
 
-export const STATUS_ORDER = ['new', 'annotated', 'waiting', 'acceptance', 'consumed'];
+export const STATUS_ORDER = ['new', 'annotated', 'waiting', 'review', 'consumed'];
 
 // 状態(status)は表示のみ日本語化（v1.6）。ファイル内部の値は英語のまま（frontmatter は不変）。
 // UI のタイル/詳細 chip と CARD_INDEX の状態列がこの日本語ラベルを使う。type/direction は英語のまま。
@@ -18,19 +18,19 @@ export const STATUS_LABEL = {
   new: '新規',
   annotated: '注釈済み',
   waiting: '浮上待ち',
-  acceptance: '検収待ち',
+  review: '検収待ち',
   consumed: '消化',
 };
 
 // Board の列は種類(type)別（v1.6）。この6種・この順（タブ名と同形の英語見出し）。
-export const BOARD_COLUMN_ORDER = ['reference', 'knowledge', 'consult', 'decision', 'report', 'acceptance'];
+export const BOARD_COLUMN_ORDER = ['reference', 'knowledge', 'consult', 'decision', 'report', 'review'];
 export const BOARD_COLUMN_LABEL = {
   reference: 'Reference',
   knowledge: 'Knowledge',
   consult: 'Consult',
   decision: 'Decision',
   report: 'Report',
-  acceptance: 'Acceptance',
+  review: 'Acceptance',
 };
 
 export const DIRECTION_LABEL = {
@@ -38,7 +38,7 @@ export const DIRECTION_LABEL = {
   'claude-to-user': 'AI→user',
 };
 
-// type（ユーザー発 reference/knowledge/consult ＋ AI発 report/acceptance/decision ＋ template）。
+// type（ユーザー発 reference/knowledge/consult ＋ AI発 report/review/decision ＋ template）。
 // decision は AI 発の裁定依頼（v1.5・作成フォームには出さない）。
 // request は廃止語＝読み込み時は consult 扱い（ファイルは書き換えない）。
 export const TYPE_LABEL = {
@@ -46,7 +46,7 @@ export const TYPE_LABEL = {
   knowledge: 'knowledge',
   consult: 'consult',
   report: 'report',
-  acceptance: 'acceptance',
+  review: 'review',
   decision: 'decision',
   template: 'template',
 };
@@ -62,11 +62,11 @@ export function normalizeType(t) {
 
 // カード詳細画面に出す操作の種類を direction から決める（v1.7）。一覧タイルには出さない。
 //   'edit'   = ユーザー発（user-to-claude）: 削除＋コメント追記（即動作）
-//   'review' = AI発（claude-to-user）: OK/NG トグル（表示のみ）＋コメント（準備中）
+//   'respond' = AI発（claude-to-user）: OK/NG トグル（表示のみ）＋コメント（準備中）
 //   'none'   = 方向不明: 操作を出さない
 export function cardOperationMode(direction) {
   if (direction === 'user-to-claude') return 'edit';
-  if (direction === 'claude-to-user') return 'review';
+  if (direction === 'claude-to-user') return 'respond';
   return 'none';
 }
 

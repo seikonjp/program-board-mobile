@@ -28,7 +28,7 @@ export const config = {
   // ビュー有効化リスト（登録制）。
   // 将来ビューを増やすときは docs/views/<id>.js を追加し、ここに 1 行足すだけで有効化できる
   //（app.js など既存コードを編集しない設計）。
-  // タブ表示順（v1.8）: Board / Reference / Knowledge / Consult / Decision / Report / Acceptance(=tray) / Memo。
+  // タブ表示順（v1.8）: Board / Reference / Knowledge / Consult / Decision / Report / Review(=tray) / Memo。
   views: [
     { id: 'board', enabled: true },
     { id: 'reference', enabled: true },

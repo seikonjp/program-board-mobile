@@ -1,6 +1,6 @@
 'use strict';
 
-// views/tray.js — 検収トレイ（Acceptance タブ）。type=report/acceptance かつ status=acceptance を縦並び。
+// views/tray.js — 検収トレイ（Review タブ）。type=report/review かつ status=review を縦並び。
 // タイル部は全タブ共通の cardTile を使用（サムネイル+タイトル+chip・v1.5 §3）＝一覧の見た目が全タブで揃う。
 // タイルをタップで詳細シート（原寸画像・本文・注釈・処理記録）。各カードに OK / NG（コメント必須）/ あとで の3ボタン。
 
@@ -10,7 +10,7 @@ import { h, cardTile } from './shared.js';
 let root, listEl;
 
 function isTrayCard(c) {
-  return (c.type === 'report' || c.type === 'acceptance') && c.status === 'acceptance';
+  return (c.type === 'report' || c.type === 'review') && c.status === 'review';
 }
 
 function create(ctx) {
@@ -86,7 +86,7 @@ async function act(ctx, card, action, comment, btns) {
 
 registerView({
   id: 'tray',
-  tabLabel: 'Acceptance',
+  tabLabel: 'Review',
   badge,
   create,
   onData,
