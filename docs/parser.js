@@ -128,6 +128,22 @@ export function extractChoices(body) {
   return out;
 }
 
+// 応答コメント欄の先頭「選択=X」プレフィックスを分離（純粋関数・v2.7・C-U0004・Mac版 server.js と同一）。
+//   「選択=A コメント」→ { choice:'A', comment:'コメント' } ／「選択=A」→ { choice:'A', comment:'' }
+//   プレフィックス無し → { choice:'', comment:<全文trim> }。全角＝も許容。choice は先頭空白までのトークン。
+export function parseChoicePrefix(text) {
+  const s = text == null ? '' : String(text);
+  const m = /^\s*選択[=＝](\S+)(?:\s+([\s\S]*))?$/.exec(s);
+  if (!m) return { choice: '', comment: s.trim() };
+  return { choice: m[1], comment: (m[2] || '').trim() };
+}
+
+// 選択肢ボタン切替: 先頭の「選択=X」だけ差し替え、ユーザーが追記したコメントは保持（純粋関数）。
+export function setChoicePrefix(text, choice) {
+  const { comment } = parseChoicePrefix(text);
+  return '選択=' + choice + ' ' + comment;
+}
+
 // カンマ/空白区切りのテキスト or 配列を target 配列へ正規化（v2.1）。
 export function parseTargetInput(v) {
   if (Array.isArray(v)) return v.map((s) => String(s).trim()).filter((s) => s.length > 0);

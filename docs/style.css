@@ -383,6 +383,11 @@ textarea.op-comment { min-height: 56px; resize: vertical; }
 }
 .op-choice-free { display: flex; gap: 8px; }
 .op-choice-input { flex: 1; }
+/* 選択→送信の一括方式（v2.7・C-U0004）: 選択状態のハイライト */
+.op-choice.is-selected { background: var(--accent); border-color: var(--accent); color: #fff; }
+.op-ok.is-selected { background: var(--ok); border-color: var(--ok); color: #fff; }
+.op-ng.is-selected { background: var(--ng); border-color: var(--ng); color: #fff; }
+.op-later.is-selected { background: var(--ink); border-color: var(--ink); color: #fff; }
 .op-comment-only { align-self: flex-start; }
 .detail-done {
   margin-top: 16px; border-top: 1px solid var(--line); padding-top: 14px;

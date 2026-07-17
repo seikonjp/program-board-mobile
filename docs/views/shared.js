@@ -299,7 +299,8 @@ function addOperations(ctx, wrap, card) {
     };
     ops.appendChild(del);
   } else {
-    // AI発（respond）: コメント欄は共通。応答ボタンは type で出し分け（v2.1）。
+    // AI発（respond）: 選択→送信の一括方式（v2.7・C-U0004）。選択は即送信せず「選択状態」にとどめ、
+    // [送信]1回で選択＋コメントをまとめて送る（サーバAPI・記録書式は不変＝配線の組み替えのみ）。
     const ta = h('textarea', 'field op-comment');
     ta.rows = 2;
     ta.placeholder = 'コメント（NGは一言必須）';
@@ -307,62 +308,84 @@ function addOperations(ctx, wrap, card) {
     ops.appendChild(ta);
 
     if (P.normalizeType(card.type) === 'decision') {
-      // decision: 本文から選択肢（[A-Z]=）を抽出してボタン化。抽出できなければ自由入力。
+      // decision: 選択肢ボタンで textarea 先頭に「選択=X 」を差し込み（追記コメントは保持）。
+      //          [送信]で先頭 prefix を parseChoicePrefix で分離して1回送信。
       const choices = P.extractChoices(card.sections && card.sections.body);
+      const send = h('button', 'btn-primary op-send', '送信');
       if (choices.length) {
         const row = h('div', 'op-choice-row');
+        const chBtns = [];
         choices.forEach((ch) => {
           const b = h('button', 'op-choice', '選択 ' + ch);
-          b.onclick = () => sendRespond(ctx, card, 'choice', { choice: ch, comment: ta.value.trim() }, [b]);
+          b.dataset.choice = ch;
+          b.onclick = () => {
+            ta.value = P.setChoicePrefix(ta.value, ch); // 先頭「選択=X」だけ差し替え・コメント保持
+            chBtns.forEach((x) => x.classList.toggle('is-selected', x === b));
+            autoGrow(ta);
+            ta.focus();
+          };
+          chBtns.push(b);
           row.appendChild(b);
         });
         ops.appendChild(row);
+        send.onclick = () => {
+          const { choice, comment } = P.parseChoicePrefix(ta.value);
+          if (choice) sendRespond(ctx, card, 'choice', { choice, comment }, [send]);
+          else if (comment) sendRespond(ctx, card, 'comment', { comment }, [send]); // 選択なし＝コメントのみ（status不変）
+          else ta.focus();
+        };
       } else {
+        // 選択肢抽出不能: 自由入力（choice）＋コメント欄＋[送信]1回（同じ一括方式）。
         const freeRow = h('div', 'op-choice-free');
         const free = h('input', 'field op-choice-input');
         free.type = 'text';
         free.placeholder = '選択（自由入力）';
-        const send = h('button', 'btn-primary op-send', '選択を送信');
-        send.onclick = () => {
-          const v = free.value.trim();
-          if (!v) { free.focus(); return; }
-          sendRespond(ctx, card, 'choice', { choice: v, comment: ta.value.trim() }, [send]);
-        };
         freeRow.appendChild(free);
-        freeRow.appendChild(send);
         ops.appendChild(freeRow);
+        send.onclick = () => {
+          const choice = free.value.trim();
+          const comment = ta.value.trim();
+          if (choice) sendRespond(ctx, card, 'choice', { choice, comment }, [send]);
+          else if (comment) sendRespond(ctx, card, 'comment', { comment }, [send]);
+          else free.focus();
+        };
       }
-      const cbtn = h('button', 'btn-secondary op-comment-only', 'コメントのみ送信');
-      cbtn.onclick = () => {
-        const v = ta.value.trim();
-        if (!v) { ta.focus(); return; }
-        sendRespond(ctx, card, 'comment', { comment: v }, [cbtn]);
-      };
-      ops.appendChild(cbtn);
+      ops.appendChild(send);
     } else {
-      // review/report 等: OK / NG / あとで＋コメントのみ送信。
+      // review/report 等: OK/NG/あとで＝「選択状態」（相互排他・再タップ解除・ハイライトのみ）。
+      //          textarea へ文字列注入はしない（NG一言必須の見え方を保つ）。[送信]で該当 kind を1回送信。
       const row = h('div', 'op-respond-row');
       const okBtn = h('button', 'btn-ok op-ok', 'OK');
       const ngBtn = h('button', 'btn-ng op-ng', 'NG');
       const laterBtn = h('button', 'btn-later op-later', 'あとで');
-      const btns = [okBtn, ngBtn, laterBtn];
-      okBtn.onclick = () => sendRespond(ctx, card, 'ok', { comment: ta.value.trim() }, btns);
-      ngBtn.onclick = () => {
-        if (!ta.value.trim()) { ta.focus(); ta.placeholder = 'NGには一言（コメント）が必須です'; ta.classList.add('field-error'); return; }
-        sendRespond(ctx, card, 'ng', { comment: ta.value.trim() }, btns);
-      };
-      laterBtn.onclick = () => sendRespond(ctx, card, 'later', {}, btns);
+      const respBtns = [okBtn, ngBtn, laterBtn];
+      okBtn.dataset.kind = 'ok'; ngBtn.dataset.kind = 'ng'; laterBtn.dataset.kind = 'later';
+      const SEND_LABEL = { ok: '送信（OK）', ng: '送信（NG）', later: '送信（あとで）' };
+      let selectedKind = null;
+      const send = h('button', 'btn-primary op-send', 'コメントのみ送信');
+      const syncSend = () => { send.textContent = selectedKind ? SEND_LABEL[selectedKind] : 'コメントのみ送信'; };
+      respBtns.forEach((b) => {
+        b.onclick = () => {
+          selectedKind = (selectedKind === b.dataset.kind) ? null : b.dataset.kind; // 再タップで解除
+          respBtns.forEach((x) => x.classList.toggle('is-selected', x.dataset.kind === selectedKind));
+          ta.classList.remove('field-error');
+          syncSend();
+        };
+      });
       row.appendChild(okBtn);
       row.appendChild(ngBtn);
       row.appendChild(laterBtn);
       ops.appendChild(row);
-      const cbtn = h('button', 'btn-secondary op-comment-only', 'コメントのみ送信');
-      cbtn.onclick = () => {
-        const v = ta.value.trim();
-        if (!v) { ta.focus(); return; }
-        sendRespond(ctx, card, 'comment', { comment: v }, [cbtn]);
+      send.onclick = () => {
+        const comment = ta.value.trim();
+        if (selectedKind === 'ng' && !comment) { ta.focus(); ta.placeholder = 'NGには一言（コメント）が必須です'; ta.classList.add('field-error'); return; }
+        if (selectedKind === 'ok') sendRespond(ctx, card, 'ok', { comment }, [send]);
+        else if (selectedKind === 'ng') sendRespond(ctx, card, 'ng', { comment }, [send]);
+        else if (selectedKind === 'later') sendRespond(ctx, card, 'later', {}, [send]);
+        else if (comment) sendRespond(ctx, card, 'comment', { comment }, [send]); // 未選択＝コメントのみ送信
+        else ta.focus(); // 未選択＋コメント空 → フォーカス誘導（送信しない）
       };
-      ops.appendChild(cbtn);
+      ops.appendChild(send);
     }
   }
 
