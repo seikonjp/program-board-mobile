@@ -594,9 +594,14 @@ export function sheetHeadingId(heading) {
   return String(heading == null ? '' : heading).trim().split(/\s+/)[0] || '';
 }
 
-// シート本文を項目ブロックへ分割（v2.2）。
-// ブロック開始 = 見出し行（`#`〜`######`）。numbered=true では列0の番号項目（`N. `）も開始。
-// 返す各ブロック: { index, kind:'heading'|'item', level, id, heading, start, end }（start/end は body 内オフセット）。
+// シート本文を項目ブロックへ分割（v2.2・v2.6でCASE分割追加）。
+// ブロック開始 =
+//   (1) 見出し行（`#`〜`######`）= kind:'heading'
+//   (2) トップレベル（インデントなし）のチェックボックス行 `- [ ]`/`- [x]` = kind:'case'（2026-07-17）
+//       → 1見出しに複数 CASE が並ぶ様式でも CASE 1件=1欄に分割され、各 CASE に独自の💬欄が付く。
+//       ぶら下がり（インデント付き）のチェックボックスは分割しない（サブ項目の内側に留める）。
+//   (3) numbered=true では列0の番号項目（`N. `）= kind:'item'
+// 返す各ブロック: { index, kind:'heading'|'case'|'item', level, id, heading, start, end }（start/end は body 内オフセット）。
 export function parseSheetBlocks(body, numbered) {
   const text = String(body == null ? '' : body);
   const lines = text.split('\n');
@@ -608,9 +613,15 @@ export function parseSheetBlocks(body, numbered) {
     if (hm) {
       const heading = hm[2].trim();
       starts.push({ offset, kind: 'heading', level: hm[1].length, heading, id: sheetHeadingId(heading) });
-    } else if (numbered) {
-      const nm = /^(\d+)\. /.exec(line);
-      if (nm) starts.push({ offset, kind: 'item', level: 0, heading: line.trim(), id: nm[1] });
+    } else {
+      const cm = /^- \[[ xX]\]( ?)(.*)$/.exec(line); // トップレベルのチェックボックス＝CASE開始
+      if (cm) {
+        const label = cm[2].trim();
+        starts.push({ offset, kind: 'case', level: 0, heading: label, id: sheetHeadingId(label.replace(/[*`]/g, '')) });
+      } else if (numbered) {
+        const nm = /^(\d+)\. /.exec(line);
+        if (nm) starts.push({ offset, kind: 'item', level: 0, heading: line.trim(), id: nm[1] });
+      }
     }
     offset += line.length + 1; // +1 = '\n'
   }

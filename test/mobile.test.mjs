@@ -1117,6 +1117,52 @@ test('㉘ sheet blocks (heading + numbered) and 💬 comment insertion + byte-in
 });
 
 // ---------------------------------------------------------------------------
+// ㉘b Sheets: CASE分割（トップレベル`- [ ]`＝サブ項目開始）＋各CASE直下への💬挿入＋トグル錨（v2.6・Mac版と挙動互換）
+// ---------------------------------------------------------------------------
+test('㉘b sheet CASE split: top-level checkbox = sub-item; per-CASE 💬 insert; toggle anchor', () => {
+  const caseSheet =
+    '## ケース表\n' +
+    '\n' +
+    '- [ ] **CASE-01 タイトルA**\n' +
+    '  - 前提: x\n' +
+    '  - 対象: PL\n' +
+    '- [x] **CASE-02 タイトルB**\n' +
+    '  - 前提: y\n' +
+    '\n' +
+    '## 前提\n' +
+    '- 軸1: a\n' +
+    '- 軸2: b\n';
+
+  // (a) 見出し＋トップレベルCASE2件＋チェックボックス無し見出しに分割
+  const blks = P.parseSheetBlocks(caseSheet, false);
+  assert.deepStrictEqual(blks.map((b) => ({ kind: b.kind, id: b.id })), [
+    { kind: 'heading', id: 'ケース表' },
+    { kind: 'case', id: 'CASE-01' },
+    { kind: 'case', id: 'CASE-02' },
+    { kind: 'heading', id: '前提' },
+  ], 'ケース表＝見出し / CASE-01・CASE-02＝case / 前提＝見出し');
+
+  // (b) チェックボックスを含まない見出しは分割されず1欄（従来どおり）
+  const zen = blks[3];
+  const zenRaw = caseSheet.slice(zen.start, zen.end);
+  assert.ok(zenRaw.includes('- 軸1: a') && zenRaw.includes('- 軸2: b'), '普通の箇条書きは分割しない');
+
+  // (c) CASE欄への💬挿入 = 当該CASEのぶら下がり末尾・次CASE/見出しの前。他部分 byte 不変。
+  const line = P.buildSheetCommentLine('2026-07-17 10:00', '📱', 'これで良い');
+  const out1 = P.insertSheetCommentInBody(caseSheet, 1, line, false);
+  assert.ok(out1.includes('  - 対象: PL\n' + line + '\n- [x] **CASE-02'), 'CASE-01 の対象:PL 直後・CASE-02 の前へ');
+  assert.strictEqual(out1.replace('\n' + line, ''), caseSheet, '挿入行を除けば元と byte 一致');
+  const out2 = P.insertSheetCommentInBody(caseSheet, 2, line, false);
+  assert.ok(out2.includes('  - 前提: y\n' + line + '\n\n## 前提'), 'CASE-02 のぶら下がり末尾・次見出しの前へ');
+
+  // (d) 分割後もトグル書き戻しは正しい全文行に当たる（行番号照合）
+  const scan = P.scanSheetCheckboxes(caseSheet);
+  assert.deepStrictEqual(scan.map((c) => [c.line, c.indent, c.checked]), [[2, 0, false], [5, 0, true]], 'CASE行は全文2行目・5行目');
+  const toggled = P.toggleCheckboxLine(caseSheet, 2, '- [ ] **CASE-01 タイトルA**');
+  assert.ok(toggled.includes('- [x] **CASE-01 タイトルA**'), 'CASE-01 行のトグルが正しい行に当たる');
+});
+
+// ---------------------------------------------------------------------------
 // ㉙ Sheets: sheetArchplanRoot 導出＋program.listSheets/readSheet/addSheetComment/approveSheet（v2.2）
 // ---------------------------------------------------------------------------
 test('㉙ program sheets: list/read/comment/approve with path derivation and activation (v2.2)', async () => {
@@ -1165,7 +1211,7 @@ test('㉙ program sheets: list/read/comment/approve with path derivation and act
   await assert.rejects(program.readSheet('scenario', '../../evil.md'), /不正|対象外/);
   await assert.rejects(program.readSheet('completion', 'METHOD.md'), /対象外/, '除外ファイル直接読取り拒否');
 
-  // (e) 承認活性条件: draft/review_card無し/frontmatter無しは不可
+  // (e) 承認活性条件: draft/frontmatter無しは不可（review_card は任意＝改定 2026-07-17・(g) で検証）
   store.set(scDir + '/SC-001.md', { content: scText.replace('state: reviewed', 'state: draft'), rev: 'rx' });
   await assert.rejects(program.approveSheet('scenario', 'SC-001.md'), /reviewed/, 'draft は承認不可');
   store.set(scDir + '/SC-001.md', { content: '# no fm\n### x\n- y\n', rev: 'ry' });
@@ -1179,6 +1225,12 @@ test('㉙ program sheets: list/read/comment/approve with path derivation and act
   assert.ok(/^status: consumed$/m.test(cardAfter), 'reviewカードが consumed');
   assert.ok(/- 応答（あなた・📱 .+?）: OK/.test(cardAfter), 'reviewカードへ OK 応答行');
   assert.ok(/^state: approved$/m.test(store.get(scDir + '/SC-001.md').content), 'シート state approved');
+
+  // (g) review_card 任意化（2026-07-17）: 無くても reviewed＋全チェック（0個は免除）なら承認可（state のみ更新・reviewカード連動なし）
+  store.set(scDir + '/SC-002.md', { content: '---\nid: SC-002\nstate: reviewed\n---\n\n### x\n- y\n', rev: 'r2' });
+  const res2 = await program.approveSheet('scenario', 'SC-002.md');
+  assert.ok(res2.ok && res2.reviewCard === '', 'review_card 無しでも承認可');
+  assert.ok(/^state: approved$/m.test(store.get(scDir + '/SC-002.md').content), 'review_card 無し承認は state のみ approved へ');
 });
 
 // ---------------------------------------------------------------------------

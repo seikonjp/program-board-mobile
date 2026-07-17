@@ -23,6 +23,8 @@
 
 ## 2. 画面（最上位ナビ4群＋設定・iPadは広幅で一覧+詳細の2ペイン）
 
+> **build25（Sheets UI改善・2026-07-17ユーザー実使用フィードバック）**: (1) **CASE欄分離**＝トップレベル`- [ ]`（CASE行）をサブ項目として欄分割し各CASEに独自の💬欄（挿入=当該CASEのぶら下がり末尾・次CASE/見出しの前）。チェックボックス無しの見出しは従来どおり1欄。分割は`parser.js` `parseSheetBlocks`が`kind:'case'`を返す（Mac版`server.js`と挙動互換） (2) **チェック拡大**＝マーク24px前後＋十分なpadding・**チェック部分のみタップ対象**（誤タップ防止） (3) **CASE行のmd整形**＝`**太字**`・`` `code` `` のインライン整形（textノード構築でXSS安全）＋本文より大きい文字 (4) **取り消し線廃止**（状態はチェックマークのみ） (5) **承認ボタン常設**＝`state`を持つSheetでグレー常設→活性条件達成で黒 (6) **`review_card`任意化**＝あればreviewカードOK＋consumed連動、なければシート`state: approved`更新のみ（データ層`approveSheet`も同条件）。
+
 > **build24（§2-4・項目チェックと承認ゲーティング）**: Sheet本文中の Markdown チェックボックス（`- [ ]`/`- [x]`/`- [X]`・インデント可）を**タップ可能なチェックとして描画**（全ソース一律・意味は解釈せず走査/描画/トグルのみ）。タップで該当行のチェック文字**1字のみ**をトグル書き戻し（他は byte 不変・`updateTextFileWithRetry` の rev 楽観ロック・読み込み時の行番号+行内容照合で不一致は拒否→再読込を促す）。**承認活性条件に「ファイル内の全チェックボックスが `[x]`」を追加**（未チェックが残れば非活性＋残数表示・データ層でも二重検証・チェック0個は従来どおり承認可）。**承認後変更検知**＝`state: approved` のSheetにアプリが書き込む（💬コメント/チェックトグル）と同じ書き込みで `state` を `reviewed` へ戻す。完成定義Sheet（DoD条件チェック）にも同一適用。データ層＝`program.js`（toggleSheetCheckbox）・純パースは `parser.js`（scanSheetCheckboxes/countSheetCheckboxes/toggleCheckboxLine/revertApprovedToReviewed）で Mac 版 `server.js` と挙動互換。
 >
 > **build22（Phase 4・Sessions）**: **Sessions** 群を実装＝`Program/Sessions/S-*/briefing.md` の起動チケットを一覧・詳細表示（frontmatter または冒頭見出し/blockquote から id・名称・role・対象・状態を抽出・frontmatterの無い手動チケット＝S-0001型も一覧に出す）。本文は軽量 md 整形で表示。**▶起動はモバイル非対応＝非活性表示＋「Macで起動」注記**（遠隔着火は Phase 外・別裁定）。データ層は `program.js`（listSessions/readSession・`config.sessionsSub` から `Program/Sessions` を導出・読み取り専用）。チケットparse（`parser.js` の parseTicket/ticketMeta）は Mac 版 `server.js` と挙動互換。

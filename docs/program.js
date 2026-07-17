@@ -545,8 +545,8 @@ export function createProgram(dropbox, config) {
     return readSheet(sourceId, file);
   }
 
-  // 承認（review_card があり state: reviewed のときのみ）。
-  // (a) reviewカードへ OK＋consumed化（Phase1 の respondCard を再利用）。(b) シート state 行のみ approved へ。
+  // 承認（state: reviewed かつ 全チェック済のとき。review_card は任意化・2026-07-17）。
+  // (a) review_card があれば reviewカードへ OK＋consumed化（Phase1 の respondCard を再利用）。無ければスキップ。(b) シート state 行のみ approved へ。
   async function approveSheet(sourceId, file) {
     const source = sheetSourceById(sourceId);
     if (!source) throw new Error('不明なソース: ' + sourceId);
@@ -557,12 +557,11 @@ export function createProgram(dropbox, config) {
     if (!meta.hasFrontmatter || meta.state == null) throw new Error('このシートは承認対象外です（frontmatterなし）');
     const state = String(meta.state).trim();
     const reviewCard = meta.reviewCard ? String(meta.reviewCard).trim() : '';
-    if (!reviewCard) throw new Error('review_card が設定されていません');
     if (state !== 'reviewed') throw new Error('承認できるのは state: reviewed のときのみです（現在: ' + state + '）');
     // §2-4 B: 全チェックボックスが [x] であること（UI だけに頼らずデータ層でも二重検証）。チェック0個は従来どおり承認可。
     const cs = P.countSheetCheckboxes(text);
     if (cs.unchecked > 0) throw new Error('未チェックの項目が ' + cs.unchecked + ' 件あります（全て [x] で承認できます）');
-    await respondCard(reviewCard, 'ok', {});                               // (a)
+    if (reviewCard) await respondCard(reviewCard, 'ok', {});                // (a) 任意化＝無ければスキップ
     await dropbox.updateTextFileWithRetry(p, (t) => P.setSheetState(t, 'approved')); // (b)
     return { ok: true, reviewCard, sheet: await readSheet(sourceId, file) };
   }

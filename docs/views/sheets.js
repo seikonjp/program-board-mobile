@@ -113,12 +113,15 @@ function renderHeaderMeta(ctx, payload) {
   const allChecked = !(cs.unchecked > 0);
   if (cs.total > 0) metaEl.appendChild(h('span', 'chip chip-check' + (allChecked ? ' is-done' : ''),
     allChecked ? '✓ 全チェック済' : '未チェック' + cs.unchecked + '件'));
+  // 承認ボタンは frontmatter に state を持つシートで常設（グレー→黒・2026-07-17）。
+  // 活性条件 = state: reviewed かつ 全チェック済（チェック0個は後者を免除）。review_card は任意。
   const btn = h('button', 'btn-primary sheet-approve', '承認する');
-  const canApprove = !!meta.reviewCard && st === 'reviewed' && allChecked;
+  const canApprove = st === 'reviewed' && allChecked;
   btn.disabled = !canApprove;
-  if (!canApprove) btn.title = !allChecked
-    ? '未チェックの項目が ' + cs.unchecked + ' 件あります（全て [x] で承認できます）'
-    : 'review_card があり state: reviewed のときのみ承認できます';
+  if (!canApprove) btn.title = st !== 'reviewed'
+    ? '批評済（state: reviewed）になると承認できます（現在: ' + (SHEET_STATE_LABEL[st] || st) + '）'
+    : '未チェックの項目が ' + cs.unchecked + ' 件あります（全て [x] で承認できます）';
+  else btn.title = '承認する（' + (meta.reviewCard ? 'reviewカードへOK＋' : '') + 'シートを承認済に更新）';
   btn.onclick = () => approve(ctx, payload.source, payload.file, btn);
   metaEl.appendChild(btn);
 }
@@ -150,11 +153,30 @@ function restStartLine(block) {
   return (block.startLine || 0) + 1 + stripped;
 }
 
-// §2-4 A: チェックボックス1個（タップでトグル）。
-function renderCheckbox(ctx, payload, absLine, lineContent, checked, label) {
-  const box = h('button', 'sheet-check' + (checked ? ' is-checked' : ''));
+// インライン Markdown の軽量整形（**太字**・`code` のみ）。XSS 安全＝text ノードのみで構築。
+function renderInlineMd(text) {
+  const s = String(text == null ? '' : text);
+  const nodes = [];
+  const re = /\*\*([^*]+)\*\*|`([^`]+)`/g;
+  let last = 0, m;
+  while ((m = re.exec(s)) !== null) {
+    if (m.index > last) nodes.push(document.createTextNode(s.slice(last, m.index)));
+    if (m[1] !== undefined) { const b = h('strong'); b.textContent = m[1]; nodes.push(b); }
+    else { const c = h('code'); c.textContent = m[2]; nodes.push(c); }
+    last = re.lastIndex;
+  }
+  if (last < s.length) nodes.push(document.createTextNode(s.slice(last)));
+  if (!nodes.length) nodes.push(document.createTextNode(s));
+  return nodes;
+}
+
+// §2-4 A: チェックボックス1個。タップ対象＝チェック部分のみ（行全体ではない＝誤タップ防止）。
+// isCaseTitle=トップレベル（インデントなし）＝サブ項目タイトル行（大きめ表示）。ラベルはインラインmd整形。
+function renderCheckbox(ctx, payload, absLine, lineContent, checked, label, isCaseTitle) {
+  const row = h('div', 'sheet-check-row' + (checked ? ' is-checked' : '') + (isCaseTitle ? ' is-case-title' : ''));
+  const box = h('button', 'sheet-check-box');
+  box.setAttribute('aria-label', checked ? 'チェック済み（タップで解除）' : '未チェック（タップでチェック）');
   box.appendChild(h('span', 'sheet-check-mark', checked ? '☑' : '☐'));
-  box.appendChild(h('span', 'sheet-check-label', label));
   box.onclick = async () => {
     box.disabled = true;
     try {
@@ -165,7 +187,11 @@ function renderCheckbox(ctx, payload, absLine, lineContent, checked, label) {
       box.disabled = false;
     }
   };
-  return box;
+  const lab = h('span', 'sheet-check-label');
+  renderInlineMd(label).forEach((n) => lab.appendChild(n));
+  row.appendChild(box);
+  row.appendChild(lab);
+  return row;
 }
 
 // テキスト領域を行単位で描画。チェックボックス行はタップ可能に、その他は連続を <pre> にまとめる。
@@ -181,7 +207,7 @@ function renderTextRegion(ctx, payload, text, startLine, preClass) {
   };
   for (let j = 0; j < lines.length; j++) {
     const m = /^(\s*)- \[([ xX])\] ?(.*)$/.exec(lines[j]);
-    if (m) { flush(); nodes.push(renderCheckbox(ctx, payload, startLine + j, lines[j], m[2].toLowerCase() === 'x', m[3])); }
+    if (m) { flush(); nodes.push(renderCheckbox(ctx, payload, startLine + j, lines[j], m[2].toLowerCase() === 'x', m[3], m[1].length === 0)); }
     else buf.push(lines[j]);
   }
   flush();
