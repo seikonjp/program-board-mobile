@@ -1182,6 +1182,104 @@ test('㉙ program sheets: list/read/comment/approve with path derivation and act
 });
 
 // ---------------------------------------------------------------------------
+// §2-4(A) 項目チェックボックス: 走査・カウント・1字トグル（byte不変・ネスト・不一致拒否・大文字X）（v2.5）
+// ---------------------------------------------------------------------------
+test('§2-4(A) checkbox scan/count/toggle: 1-char write, nesting, mismatch reject, uppercase X', () => {
+  const body = '### 条件\n- [ ] ケース1\n  - [x] 子ケース\n- [X] 大文字\nふつうの行\n';
+  const scanned = P.scanSheetCheckboxes(body);
+  assert.deepStrictEqual(scanned.map((c) => [c.line, c.indent, c.checked, c.char, c.text]), [
+    [1, 0, false, ' ', 'ケース1'],
+    [2, 2, true, 'x', '子ケース'],
+    [3, 0, true, 'X', '大文字'],
+  ], 'チェックボックス3行を走査');
+  assert.deepStrictEqual(P.countSheetCheckboxes(body), { total: 3, checked: 2, unchecked: 1 });
+  assert.deepStrictEqual(P.countSheetCheckboxes('（チェックなし）\n- 普通の箇条書き\n'), { total: 0, checked: 0, unchecked: 0 });
+
+  // (a) [ ]→[x]（該当1字のみ変化・前後 byte 一致）
+  const t1 = P.toggleCheckboxLine(body, 1, '- [ ] ケース1');
+  assert.strictEqual(t1, body.replace('- [ ] ケース1', '- [x] ケース1'), '[ ]→[x] は1字のみ');
+  let diff = 0; for (let i = 0; i < body.length; i++) if (body[i] !== t1[i]) diff++;
+  assert.strictEqual(diff, 1, '変化は角括弧内の1字のみ');
+
+  // (b) ネスト行 [x]→[ ]
+  assert.strictEqual(P.toggleCheckboxLine(body, 2, '  - [x] 子ケース'),
+    body.replace('  - [x] 子ケース', '  - [ ] 子ケース'), 'ネスト行トグル');
+  // (c) 大文字 X はトグルで [ ] へ
+  assert.strictEqual(P.toggleCheckboxLine(body, 3, '- [X] 大文字'),
+    body.replace('- [X] 大文字', '- [ ] 大文字'), '[X]→[ ]');
+  // (d) 不一致・非チェック行・範囲外は拒否
+  assert.throws(() => P.toggleCheckboxLine(body, 1, '- [ ] 別'), /変化しています/);
+  assert.throws(() => P.toggleCheckboxLine(body, 4, 'ふつうの行'), /チェックボックス行では/);
+  assert.throws(() => P.toggleCheckboxLine(body, 99, null), /範囲外/);
+
+  // (e) sheetPayload に checkStats と block.startLine が入る
+  const fm = '---\nid: SC-001\nstate: reviewed\nreview_card: C-A0001\n---\n\n### 条件\n- [ ] ケース1\n- [x] ケース2\n';
+  const pay = P.sheetPayload(fm, false);
+  assert.deepStrictEqual(pay.checkStats, { total: 2, checked: 1, unchecked: 1 }, 'checkStats');
+  // 全文行: 0=--- 1=id 2=state 3=review_card 4=--- 5=空 6=### 条件
+  assert.strictEqual(pay.blocks[0].startLine, 6, 'block.startLine は全文行番号');
+});
+
+// ---------------------------------------------------------------------------
+// §2-4(B/C/D) program: 承認ゲート＋トグル書き戻し＋承認後 reviewed 戻し＋完成定義（rev楽観ロック）（v2.5）
+// ---------------------------------------------------------------------------
+test('§2-4(B/C/D) program approve gate + toggle write-back + post-approval revert', async () => {
+  const scDir = '/ArchPlan/Docs/ConOps/Scenarios';
+  const tdDir = '/ArchPlan/archplan-core/Docs/TestDefinitions';
+  const reviewCard = '/ArchPlan/Program/Cards/C-A0001_sc/card.md';
+  const reviewMd = '---\nid: C-A0001\ntitle: 承認\ndirection: claude-to-user\ntype: review\ntags: []\nsurface: ""\nstatus: review\ncreated: 2026-07-16\n---\n\n## 本文\n\nx\n\n## 処理記録\n\n- ↳ 2026-07-16 作成\n';
+  const withChecks = (s1, s2, st) =>
+    '---\nid: SC-001\nstate: ' + (st || 'reviewed') + '\nreview_card: C-A0001\n---\n\n### 条件\n- [' + s1 + '] ケース1\n- [' + s2 + '] ケース2\n';
+
+  const { program, store } = mockProgram({
+    [scDir + '/SC-001.md']: withChecks(' ', 'x'),
+    [tdDir + '/features/玄関配置.md']: '---\nid: DOD-玄関\nstate: reviewed\nreview_card: C-A0001\n---\n\n## 完成条件\n- [ ] 条件1\n- [ ] 条件2\n',
+    [reviewCard]: reviewMd,
+  }, { sheetSources: APP_CONFIG.sheetSources });
+
+  // (B) 未チェックが残れば承認拒否（残数付き）
+  await assert.rejects(program.approveSheet('scenario', 'SC-001.md'), /未チェック.*1 件/, '未チェック1件で拒否');
+
+  // (A) トグル書き戻し（全文行7 = '- [ ] ケース1'・reviewed のまま state 不変）
+  const before = store.get(scDir + '/SC-001.md').content;
+  await program.toggleSheetCheckbox('scenario', 'SC-001.md', 7, '- [ ] ケース1');
+  const after = store.get(scDir + '/SC-001.md').content;
+  assert.strictEqual(after, before.replace('- [ ] ケース1', '- [x] ケース1'), 'トグルは1字のみ・state 不変');
+
+  // 行不一致トグルは拒否（transform が throw → updateTextFileWithRetry は propagate）
+  await assert.rejects(program.toggleSheetCheckbox('scenario', 'SC-001.md', 7, '- [ ] 変わった内容'), /変化しています/);
+
+  // (B) 全 [x] で承認可（reviewカード OK+consumed・シート approved）
+  const res = await program.approveSheet('scenario', 'SC-001.md');
+  assert.ok(res.ok && res.reviewCard === 'C-A0001', '承認成功');
+  assert.ok(/^state: approved$/m.test(store.get(scDir + '/SC-001.md').content), 'state approved');
+  assert.ok(/^status: consumed$/m.test(store.get(reviewCard).content), 'reviewカード consumed');
+
+  // (C) approved でトグル → reviewed へ戻る
+  await program.toggleSheetCheckbox('scenario', 'SC-001.md', 7, '- [x] ケース1');
+  let now = store.get(scDir + '/SC-001.md').content;
+  assert.ok(/^state: reviewed$/m.test(now) && /- \[ \] ケース1/.test(now), 'approved でトグル→ reviewed へ戻る');
+
+  // (C) approved でコメント追記 → reviewed へ戻る
+  store.set(scDir + '/SC-001.md', { content: withChecks('x', 'x', 'approved'), rev: 'rz' });
+  await program.addSheetComment('scenario', 'SC-001.md', 0, '確認しました');
+  now = store.get(scDir + '/SC-001.md').content;
+  assert.ok(/^state: reviewed$/m.test(now) && /💬（📱 .+?）: 確認しました/.test(now), 'approved でコメント→ reviewed');
+
+  // (B) チェック0個は従来どおり承認可
+  store.set(scDir + '/SC-001.md', { content: '---\nid: SC-001\nstate: reviewed\nreview_card: C-A0001\n---\n\n### 条件\n- 普通の箇条書き\n', rev: 'r0' });
+  store.set(reviewCard, { content: reviewMd, rev: 'rc' });
+  assert.ok((await program.approveSheet('scenario', 'SC-001.md')).ok, 'チェック0個は承認可');
+
+  // (D) 完成定義ソースでも同一機構（全文行7,8 = 条件1,2）
+  await assert.rejects(program.approveSheet('completion', 'features/玄関配置.md'), /未チェック/, '完成定義も未チェックで拒否');
+  await program.toggleSheetCheckbox('completion', 'features/玄関配置.md', 7, '- [ ] 条件1');
+  await program.toggleSheetCheckbox('completion', 'features/玄関配置.md', 8, '- [ ] 条件2');
+  store.set(reviewCard, { content: reviewMd, rev: 'rc2' });
+  assert.ok((await program.approveSheet('completion', 'features/玄関配置.md')).ok, '完成定義も全チェックで承認可');
+});
+
+// ---------------------------------------------------------------------------
 // ㉚ Sheets view: 群配線・ソース一覧・項目コメント・承認の配線（ソース文字列検証）（v2.2）
 // ---------------------------------------------------------------------------
 test('㉚ sheets view + group wiring (source-text checks) (v2.2)', () => {
@@ -1189,6 +1287,8 @@ test('㉚ sheets view + group wiring (source-text checks) (v2.2)', () => {
   assert.ok(sheets.includes("registerView({ id: 'sheets'"), 'sheets ビューが登録される');
   assert.ok(sheets.includes('ctx.program.listSheets()') && sheets.includes('ctx.program.readSheet('), '一覧＋開くを program に委譲');
   assert.ok(sheets.includes('ctx.program.addSheetComment(') && sheets.includes('ctx.program.approveSheet('), 'コメント＋承認を program に委譲');
+  assert.ok(sheets.includes('ctx.program.toggleSheetCheckbox('), 'チェックボックスのトグルを program に委譲（§2-4）');
+  assert.ok(sheets.includes('未チェック') && sheets.includes('checkStats'), '未チェック残数の表示＋承認ゲート（§2-4 B）');
   assert.ok(!sheets.includes('editSheet') && !sheets.includes('replaceUnderHeading') && !sheets.includes('editCard'), '本文編集UIは提供しない（コメントのみ）');
   assert.ok(sheets.includes("st === 'reviewed'") && sheets.includes('meta.reviewCard'), '承認ボタンは review_card+reviewed で活性');
   assert.ok(sheets.includes('block.collapse') && sheets.includes('details'), '批評ブロックは details で折りたたみ');

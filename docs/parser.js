@@ -669,17 +669,77 @@ export function setSheetState(text, newState) {
   return serializeCard(p);
 }
 
+// ---------------------------------------------------------------------------
+// 項目チェックボックス（§2-4・2026-07-17）。本文中の Markdown チェックボックス
+// （`- [ ]` / `- [x]` / `- [X]`・インデント可）を全ソース一律に走査するだけ（意味は解釈しない）。
+// 行番号はファイル全体（frontmatter 含む）の 0 始まり＝トグル書き戻しの錨。Mac 版 server.js と挙動互換。
+// ---------------------------------------------------------------------------
+
+// m[1]=インデント, m[2]=チェック文字, m[3]=直後の空白, m[4]=ラベル。
+const SHEET_CHECKBOX_RE = /^(\s*)- \[([ xX])\]( ?)(.*)$/;
+
+// ファイル全文からチェックボックス行を走査（表示＋トグル用）。line = 全文での 0 始まり行番号。
+export function scanSheetCheckboxes(text) {
+  const lines = String(text == null ? '' : text).split('\n');
+  const out = [];
+  for (let i = 0; i < lines.length; i++) {
+    const m = SHEET_CHECKBOX_RE.exec(lines[i]);
+    if (!m) continue;
+    out.push({ line: i, indent: m[1].length, checked: m[2].toLowerCase() === 'x', char: m[2], text: m[4], content: lines[i] });
+  }
+  return out;
+}
+
+// チェックボックスの総数・チェック済/未チェック（承認ゲート用）。チェック0個なら total=0。
+export function countSheetCheckboxes(text) {
+  const c = scanSheetCheckboxes(text);
+  const checked = c.filter((x) => x.checked).length;
+  return { total: c.length, checked, unchecked: c.length - checked };
+}
+
+// 該当行のチェック文字 1 字のみをトグル（' '↔'x'・大文字 X もトグルで ' ' へ）。他は全て byte 不変。
+// lineIndex/expectedLine は読み込み時の錨。行が期待内容でなければ拒否（再読込を促す）。
+export function toggleCheckboxLine(text, lineIndex, expectedLine) {
+  const lines = String(text == null ? '' : text).split('\n');
+  if (!(lineIndex >= 0 && lineIndex < lines.length)) {
+    throw new Error('対象行が範囲外です（再読込してください）');
+  }
+  const line = lines[lineIndex];
+  if (expectedLine != null && line !== String(expectedLine)) {
+    throw new Error('対象行が変化しています（再読込してください）');
+  }
+  const m = SHEET_CHECKBOX_RE.exec(line);
+  if (!m) throw new Error('チェックボックス行ではありません（再読込してください）');
+  const pos = m[1].length + 3; // インデント + '- [' の 3 文字ぶん = 角括弧内の 1 字
+  const next = line[pos] === ' ' ? 'x' : ' ';
+  lines[lineIndex] = line.slice(0, pos) + next + line.slice(pos + 1);
+  return lines.join('\n');
+}
+
+// 承認後の変更検知（§2-4 C）。アプリの書き込みで本文が変わったとき、state: approved なら
+// reviewed へ戻す（「承認済みのまま中身が変わる」防止）。approved 以外は byte 不変で返す。
+export function revertApprovedToReviewed(text) {
+  const meta = parseSheetMeta(text);
+  if (meta.hasFrontmatter && meta.state != null && String(meta.state).trim() === 'approved') {
+    return setSheetState(text, 'reviewed');
+  }
+  return text;
+}
+
 // 開いたシートの表示ペイロード（frontmatterメタ＋序文＋項目ブロック・raw付き）。Mac版 sheetItemPayload と同形。
 export function sheetPayload(text, numbered) {
   const p = parseCard(text);
+  // 本文が全文の何行目から始まるか（frontmatter 行数）= チェックボックスの全文行番号を出すための基準。
+  const bodyStartLine = (String(text).slice(0, String(text).length - p.body.length).match(/\n/g) || []).length;
   const raw = parseSheetBlocks(p.body, numbered);
   const blocks = raw.map((b) => ({
     index: b.index, kind: b.kind, level: b.level, id: b.id, heading: b.heading,
     raw: p.body.slice(b.start, b.end).replace(/\s+$/, ''),
     collapse: sheetBlockCollapses(b),
+    startLine: bodyStartLine + (p.body.slice(0, b.start).match(/\n/g) || []).length,
   }));
   const preamble = (raw.length ? p.body.slice(0, raw[0].start) : p.body).replace(/\s+$/, '');
-  return { meta: parseSheetMeta(text), preamble, blocks };
+  return { meta: parseSheetMeta(text), preamble, preambleStartLine: bodyStartLine, blocks, checkStats: countSheetCheckboxes(text) };
 }
 
 // ---------------------------------------------------------------------------

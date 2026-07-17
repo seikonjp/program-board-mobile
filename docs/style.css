@@ -524,6 +524,21 @@ textarea.op-comment { min-height: 56px; resize: vertical; }
 .chip-sheet-state.state-approved { background: #dcefe3; color: #1f7a4d; }
 .sheet-approve { padding: 8px 16px; font-size: 14px; }
 .sheet-approve:disabled { opacity: .5; }
+.chip-check { background: #fff2d8; color: #8a6d1f; font-weight: 700; }
+.chip-check.is-done { background: #dcefe3; color: #1f7a4d; }
+
+/* §2-4 項目チェックボックス（タップでトグル） */
+.sheet-check {
+  display: flex; gap: 8px; align-items: flex-start; width: 100%;
+  text-align: left; background: none; border: none; cursor: pointer;
+  padding: 4px 0; font-family: inherit; font-size: 13px; color: var(--ink); line-height: 1.6;
+}
+.sheet-check:active { background: var(--bg); border-radius: 6px; }
+.sheet-check:disabled { opacity: .5; }
+.sheet-check-mark { flex: 0 0 auto; font-size: 17px; line-height: 1.4; color: var(--later); }
+.sheet-check.is-checked .sheet-check-mark { color: #1f7a4d; }
+.sheet-check-label { white-space: pre-wrap; word-break: break-word; }
+.sheet-check.is-checked .sheet-check-label { color: var(--muted, #789); text-decoration: line-through; }
 
 .sheet-body { display: flex; flex-direction: column; gap: 4px; }
 .sheet-preamble, .sheet-block-text {

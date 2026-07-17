@@ -527,7 +527,21 @@ export function createProgram(dropbox, config) {
     if (clean === '') throw new Error('コメントが空です');
     const line = P.buildSheetCommentLine(P.nowStamp(), '📱', clean);
     const p = join(sheetBase(source), file);
-    await dropbox.updateTextFileWithRetry(p, (text) => P.insertSheetComment(text, blockIndex, line, !!source.numbered));
+    // §2-4 C: approved のシートに書き込むと本文が変わる → 同じ書き込みで state を reviewed へ戻す。
+    await dropbox.updateTextFileWithRetry(p, (text) =>
+      P.revertApprovedToReviewed(P.insertSheetComment(text, blockIndex, line, !!source.numbered)));
+    return readSheet(sourceId, file);
+  }
+
+  // 項目チェックボックスのトグル書き戻し（§2-4 A）。該当行の 1 字のみ置換（他は byte 不変・rev 楽観ロック）。
+  // approved のシートは同じ書き込みで state を reviewed へ戻す（C）。行不一致は transform が throw（再読込を促す）。
+  async function toggleSheetCheckbox(sourceId, file, lineIndex, expectedLine) {
+    const source = sheetSourceById(sourceId);
+    if (!source) throw new Error('不明なソース: ' + sourceId);
+    sheetAssertFile(source, file);
+    const p = join(sheetBase(source), file);
+    await dropbox.updateTextFileWithRetry(p, (text) =>
+      P.revertApprovedToReviewed(P.toggleCheckboxLine(text, lineIndex, expectedLine)));
     return readSheet(sourceId, file);
   }
 
@@ -545,6 +559,9 @@ export function createProgram(dropbox, config) {
     const reviewCard = meta.reviewCard ? String(meta.reviewCard).trim() : '';
     if (!reviewCard) throw new Error('review_card が設定されていません');
     if (state !== 'reviewed') throw new Error('承認できるのは state: reviewed のときのみです（現在: ' + state + '）');
+    // §2-4 B: 全チェックボックスが [x] であること（UI だけに頼らずデータ層でも二重検証）。チェック0個は従来どおり承認可。
+    const cs = P.countSheetCheckboxes(text);
+    if (cs.unchecked > 0) throw new Error('未チェックの項目が ' + cs.unchecked + ' 件あります（全て [x] で承認できます）');
     await respondCard(reviewCard, 'ok', {});                               // (a)
     await dropbox.updateTextFileWithRetry(p, (t) => P.setSheetState(t, 'approved')); // (b)
     return { ok: true, reviewCard, sheet: await readSheet(sourceId, file) };
@@ -693,6 +710,7 @@ export function createProgram(dropbox, config) {
     readSheet,
     addSheetComment,
     approveSheet,
+    toggleSheetCheckbox,
     loadProgress,
     listLibrary,
     readLibraryItem,

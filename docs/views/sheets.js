@@ -108,10 +108,17 @@ function renderHeaderMeta(ctx, payload) {
   const st = String(meta.state).trim();
   metaEl.appendChild(h('span', 'chip chip-sheet-state state-' + st, SHEET_STATE_LABEL[st] || st));
   if (meta.reviewCard) metaEl.appendChild(h('span', 'chip', 'review: ' + meta.reviewCard));
+  // §2-4 B: 全チェックボックスが [x] であることを承認活性条件に追加（未チェックが残れば残数を表示）。
+  const cs = payload.checkStats || { total: 0, unchecked: 0 };
+  const allChecked = !(cs.unchecked > 0);
+  if (cs.total > 0) metaEl.appendChild(h('span', 'chip chip-check' + (allChecked ? ' is-done' : ''),
+    allChecked ? '✓ 全チェック済' : '未チェック' + cs.unchecked + '件'));
   const btn = h('button', 'btn-primary sheet-approve', '承認する');
-  const canApprove = !!meta.reviewCard && st === 'reviewed';
+  const canApprove = !!meta.reviewCard && st === 'reviewed' && allChecked;
   btn.disabled = !canApprove;
-  if (!canApprove) btn.title = 'review_card があり state: reviewed のときのみ承認できます';
+  if (!canApprove) btn.title = !allChecked
+    ? '未チェックの項目が ' + cs.unchecked + ' 件あります（全て [x] で承認できます）'
+    : 'review_card があり state: reviewed のときのみ承認できます';
   btn.onclick = () => approve(ctx, payload.source, payload.file, btn);
   metaEl.appendChild(btn);
 }
@@ -119,7 +126,8 @@ function renderHeaderMeta(ctx, payload) {
 function renderSheet(ctx, payload) {
   renderHeaderMeta(ctx, payload);
   bodyEl.innerHTML = '';
-  if (payload.preamble) bodyEl.appendChild(h('pre', 'sheet-preamble', payload.preamble));
+  if (payload.preamble) renderTextRegion(ctx, payload, payload.preamble, payload.preambleStartLine || 0, 'sheet-preamble')
+    .forEach((n) => bodyEl.appendChild(n));
   (payload.blocks || []).forEach((b) => bodyEl.appendChild(renderBlock(ctx, payload, b)));
 }
 
@@ -132,6 +140,54 @@ function blockRest(block) {
   return block.raw;
 }
 
+// blockRest の先頭行が全文の何行目か（heading は見出し行＋先頭空行ぶんを足す）。
+function restStartLine(block) {
+  if (block.kind !== 'heading') return block.startLine || 0;
+  const nl = block.raw.indexOf('\n');
+  if (nl === -1) return block.startLine || 0;
+  const afterHeading = block.raw.slice(nl + 1);
+  const stripped = afterHeading.length - afterHeading.replace(/^\n+/, '').length; // 先頭空行数（1行=1改行）
+  return (block.startLine || 0) + 1 + stripped;
+}
+
+// §2-4 A: チェックボックス1個（タップでトグル）。
+function renderCheckbox(ctx, payload, absLine, lineContent, checked, label) {
+  const box = h('button', 'sheet-check' + (checked ? ' is-checked' : ''));
+  box.appendChild(h('span', 'sheet-check-mark', checked ? '☑' : '☐'));
+  box.appendChild(h('span', 'sheet-check-label', label));
+  box.onclick = async () => {
+    box.disabled = true;
+    try {
+      const updated = await ctx.program.toggleSheetCheckbox(payload.source, payload.file, absLine, lineContent);
+      renderSheet(ctx, updated);
+    } catch (e) {
+      ctx.toast('チェック切替に失敗: ' + (e.message || e) + '（開き直してください）');
+      box.disabled = false;
+    }
+  };
+  return box;
+}
+
+// テキスト領域を行単位で描画。チェックボックス行はタップ可能に、その他は連続を <pre> にまとめる。
+// startLine = text 先頭行の全文行番号。preClass は非チェック行の <pre> クラス。
+function renderTextRegion(ctx, payload, text, startLine, preClass) {
+  const nodes = [];
+  const lines = String(text == null ? '' : text).split('\n');
+  let buf = [];
+  const flush = () => {
+    const t = buf.join('\n').replace(/^\n+/, '').replace(/\n+$/, '');
+    if (t !== '') nodes.push(h('pre', preClass || 'sheet-block-text', t));
+    buf = [];
+  };
+  for (let j = 0; j < lines.length; j++) {
+    const m = /^(\s*)- \[([ xX])\] ?(.*)$/.exec(lines[j]);
+    if (m) { flush(); nodes.push(renderCheckbox(ctx, payload, startLine + j, lines[j], m[2].toLowerCase() === 'x', m[3])); }
+    else buf.push(lines[j]);
+  }
+  flush();
+  return nodes;
+}
+
 function renderBlock(ctx, payload, block) {
   // 批評ブロックは折りたたみ（details・解釈=見出しに「批評」を含むセクション）。
   const container = block.collapse ? h('details', 'sheet-block sheet-block-collapse') : h('div', 'sheet-block');
@@ -141,7 +197,13 @@ function renderBlock(ctx, payload, block) {
     container.appendChild(h('h' + Math.min(block.level + 1, 6), 'sheet-block-head', block.heading));
   }
   const rest = blockRest(block);
-  if (rest) container.appendChild(h('pre', 'sheet-block-text', rest));
+  if (rest) {
+    if (/^\s*- \[[ xX]\]/m.test(rest)) {
+      renderTextRegion(ctx, payload, rest, restStartLine(block), 'sheet-block-text').forEach((n) => container.appendChild(n));
+    } else {
+      container.appendChild(h('pre', 'sheet-block-text', rest));
+    }
+  }
   // 項目直下コメント（本文編集はしない＝コメントのみ）。
   const row = h('div', 'sheet-comment-row');
   const ta = h('textarea', 'field sheet-comment-input');
