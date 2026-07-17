@@ -67,9 +67,12 @@ export const config = {
   // 差し替え（初版census→合流後FEATURE_LIST）は sub+type の変更のみ。
   progressSources: {
     census: { sub: 'Projects/DevelopmentPlan/FEATURE_FPU_CENSUS.md', type: 'census' },
+    comTargets: { sub: 'Projects/DevelopmentPlan/Works/W4_全体構成と機能の計画/COM_FUNCTION_TARGETS.md', type: 'comTargets' },
+    progressAxis: { sub: 'Program/PROGRESS_AXIS.md', type: 'progressAxis' },
     taskLedger: { sub: 'Projects/DevelopmentPlan/TASK_LEDGER.md', type: 'taskLedger' },
     lanes: { sub: 'Projects/TestSystem/LANES_BOARD_2026-07.md', type: 'lanes' },
     testStatus: { sub: 'archplan-core/Docs/TestDefinitions/test_status.json', type: 'testStatus' },
+    carryover: { sub: 'Program/CARRYOVER.md', type: 'carryover' },
   },
 
   // Sessions（起動チケット・v2.4・Phase4）。programRoot 直下 'Sessions'（S-*/briefing.md）。

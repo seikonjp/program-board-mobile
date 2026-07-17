@@ -7,13 +7,21 @@
 import { registerView } from '../registry.js';
 import { h } from './shared.js';
 
-const STAGE_ORDER = ['済', 'S0', 'S1', 'S2', 'S3', 'S4', 'S5', 'S6', '並走', 'R7', '線外', '対象外', '（段階なし）'];
-const PROGRESS_STATE_ORDER = ['実装', '一部', '未実装', '将来想定', '不明'];
+const STAGE_ORDER = ['済', 'S0', 'S1', 'S2', 'S3', 'S4', 'S5', 'S6', '随時', '並走', 'R7', '線外', '対象外', '—', '不明', '（段階なし）'];
+const USTATUS_ORDER = ['進行中', '待ち', '未着手', '完了', '対象外', '不明'];
+const KIND_ORDER = ['feature', 'fpu', 'com', 'cmp', 'data', 'infra', 'framework', 'doc', 'ui', 'test'];
+const KIND_LABEL = {
+  feature: '機能', fpu: 'FPU', com: 'コム', cmp: '部品', data: 'データ',
+  infra: '基盤', framework: '大枠', doc: '文書', ui: 'UI', test: 'テスト',
+};
+const BLOCKED_LABEL = { '裁定': '裁定待ち', '依存': '依存待ち', '上流': '上流待ち', '順番': '順番待ち', '容量': '容量' };
 
 let root, subtabsEl, progressPane, libraryPane;
 // 進捗
-let pgSearch, pgState, pgCat, pgNote, pgBody;
+let pgSearch, pgKind, pgStatus, pgGroupBy, pgSelBar, pgNote, pgBody;
 let progressData = null;
+let progressSelected = null;
+let progressGroupBy = 'stage';
 // ライブラリ
 let libListPane, libDetailPane, libAxesWrap, libTitle, libSearch, libBody;
 let libraryAxes = [];
@@ -42,18 +50,25 @@ function create(ctx) {
   progressPane = h('div', 'progress-pane');
   const toolbar = h('div', 'progress-toolbar');
   pgSearch = h('input', 'field progress-search');
-  pgSearch.type = 'search'; pgSearch.placeholder = '機能名で検索';
+  pgSearch.type = 'search'; pgSearch.placeholder = 'id・名称で検索';
   pgSearch.oninput = renderProgress;
-  pgState = h('select', 'progress-select');
-  pgCat = h('select', 'progress-select');
-  pgState.onchange = renderProgress;
-  pgCat.onchange = renderProgress;
+  pgGroupBy = h('select', 'progress-select');
+  pgGroupBy.innerHTML = '<option value="stage">段階で分類</option><option value="kind">種別で分類</option><option value="status">状態で分類</option>';
+  pgGroupBy.onchange = () => { progressGroupBy = pgGroupBy.value; renderProgress(); };
+  pgKind = h('select', 'progress-select');
+  pgStatus = h('select', 'progress-select');
+  pgKind.onchange = renderProgress;
+  pgStatus.onchange = renderProgress;
   toolbar.appendChild(pgSearch);
-  toolbar.appendChild(pgState);
-  toolbar.appendChild(pgCat);
+  toolbar.appendChild(pgGroupBy);
+  toolbar.appendChild(pgKind);
+  toolbar.appendChild(pgStatus);
   progressPane.appendChild(toolbar);
   pgNote = h('p', 'progress-note view-hint');
   progressPane.appendChild(pgNote);
+  pgSelBar = h('div', 'progress-selection');
+  pgSelBar.hidden = true;
+  progressPane.appendChild(pgSelBar);
   pgBody = h('div', 'progress-body');
   progressPane.appendChild(pgBody);
   root.appendChild(progressPane);
@@ -141,6 +156,7 @@ async function loadProgress(ctx) {
   pgBody.textContent = '読み込み中…';
   try {
     progressData = await ctx.program.loadProgress();
+    progressSelected = null;
     setupFilters();
     renderProgress();
   } catch (e) {
@@ -150,74 +166,162 @@ async function loadProgress(ctx) {
 }
 
 function setupFilters() {
-  const rows = (progressData && progressData.rows) || [];
-  const states = [...new Set(rows.filter((r) => r.hasTag).map((r) => r.state))].filter(Boolean)
-    .sort((a, b) => PROGRESS_STATE_ORDER.indexOf(a) - PROGRESS_STATE_ORDER.indexOf(b));
-  const cats = [...new Set(rows.map((r) => r.category))].filter(Boolean).sort();
-  fillSelect(pgState, '状態: すべて', states);
-  fillSelect(pgCat, 'カテゴリ: すべて', cats);
+  const units = (progressData && progressData.units) || [];
+  const kinds = [...new Set(units.map((u) => u.kind))].filter(Boolean)
+    .sort((a, b) => KIND_ORDER.indexOf(a) - KIND_ORDER.indexOf(b));
+  fillSelect(pgKind, '種別: すべて', kinds.map((k) => ({ v: k, label: KIND_LABEL[k] || k })));
+  fillSelect(pgStatus, '状態: すべて', USTATUS_ORDER.map((s) => ({ v: s, label: s })));
 }
 
 function fillSelect(sel, allLabel, values) {
   sel.innerHTML = '';
   const o0 = h('option', null, allLabel); o0.value = ''; sel.appendChild(o0);
-  values.forEach((v) => { const o = h('option', null, v); o.value = v; sel.appendChild(o); });
+  values.forEach((v) => { const o = h('option', null, v.label); o.value = v.v; sel.appendChild(o); });
+}
+
+function groupKeyOf(u) {
+  if (progressGroupBy === 'kind') return u.kind;
+  if (progressGroupBy === 'status') return u.status;
+  return stageBase(u.stage);
+}
+function groupLabelOf(k) {
+  if (progressGroupBy === 'kind') return '種別 ' + (KIND_LABEL[k] || k);
+  if (progressGroupBy === 'status') return '状態 ' + k;
+  return '段階 ' + k;
+}
+function groupSortOf(a, b) {
+  const order = progressGroupBy === 'kind' ? KIND_ORDER : (progressGroupBy === 'status' ? USTATUS_ORDER : STAGE_ORDER);
+  const ia = order.indexOf(a); const ib = order.indexOf(b);
+  return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+}
+
+function selectProgressNode(nodeId) {
+  progressSelected = (progressSelected === nodeId) ? null : nodeId;
+  renderProgress();
+}
+
+function renderProgressSelection(byId) {
+  pgSelBar.innerHTML = '';
+  if (!progressSelected) { pgSelBar.hidden = true; return; }
+  pgSelBar.hidden = false;
+  const lit = (progressData.reverseClosure && progressData.reverseClosure[progressSelected]) || [];
+  const selUnit = byId.get(progressSelected);
+  const kindTxt = selUnit ? (KIND_LABEL[selUnit.kind] || selUnit.kind)
+    : (/^Q-/.test(progressSelected) ? '裁定' : (/^S[0-6]$/.test(progressSelected) ? '段階' : '外部'));
+  pgSelBar.appendChild(h('span', 'progress-sel-label', '🔦 選択: ' + progressSelected + '（' + kindTxt + '）→ ' + lit.length + '件が依存（点灯中）'));
+  const clr = h('button', 'progress-sel-clear', '選択解除');
+  clr.onclick = () => { progressSelected = null; renderProgress(); };
+  pgSelBar.appendChild(clr);
 }
 
 function renderProgress() {
   if (!progressData) return;
   const p = progressData;
+  const units = p.units || [];
+  const byId = new Map(units.map((u) => [u.id, u]));
+
   const missing = [];
+  if (!p.sources.comTargets) missing.push('COM_TARGETS');
+  if (!p.sources.progressAxis) missing.push('PROGRESS_AXIS');
   if (!p.sources.taskLedger) missing.push('TASK_LEDGER');
   if (!p.sources.lanes) missing.push('LANES');
-  pgNote.textContent = (p.sources.testStatus ? 'テスト状況あり' : 'テスト状況なし（無表示）')
-    + (p.skipped ? '・崩れ行' + p.skipped + '件skip' : '')
+  if (!p.sources.carryover) missing.push('CARRYOVER');
+  const skipTotal = (p.skipped.census || 0) + (p.skipped.com || 0) + (p.skipped.axis || 0);
+  pgNote.textContent = '全' + p.counts.total + '件（' + KIND_ORDER.filter((k) => p.counts.byKind[k])
+    .map((k) => (KIND_LABEL[k] || k) + p.counts.byKind[k]).join('・') + '）'
+    + (p.sources.testStatus ? '・テスト状況あり' : '')
+    + (skipTotal ? '・崩れ行' + skipTotal + '件skip' : '')
     + (missing.length ? '・未取得: ' + missing.join('/') : '');
 
+  renderProgressSelection(byId);
+
   const q = (pgSearch.value || '').trim().toLowerCase();
-  const fState = pgState.value;
-  const fCat = pgCat.value;
-  let rows = p.rows.filter((r) => r.hasTag);
-  if (q) rows = rows.filter((r) => (r.name || '').toLowerCase().includes(q) || (r.id || '').toLowerCase().includes(q));
-  if (fState) rows = rows.filter((r) => r.state === fState);
-  if (fCat) rows = rows.filter((r) => r.category === fCat);
+  const fKind = pgKind.value;
+  const fStat = pgStatus.value;
+  let rows = units.slice();
+  if (q) rows = rows.filter((u) => (u.title || '').toLowerCase().includes(q) || (u.id || '').toLowerCase().includes(q));
+  if (fKind) rows = rows.filter((u) => u.kind === fKind);
+  if (fStat) rows = rows.filter((u) => u.status === fStat);
 
   pgBody.innerHTML = '';
-  if (!rows.length) { pgBody.appendChild(h('p', 'view-hint', '該当する機能はありません。')); return; }
+  if (!rows.length) { pgBody.appendChild(h('p', 'view-hint', '該当する作業単位はありません。')); return; }
+
+  const litSet = progressSelected ? new Set((p.reverseClosure && p.reverseClosure[progressSelected]) || []) : null;
 
   const groups = new Map();
-  rows.forEach((r) => { const k = stageBase(r.stage); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(r); });
-  const keys = [...groups.keys()].sort((a, b) => {
-    const ia = STAGE_ORDER.indexOf(a); const ib = STAGE_ORDER.indexOf(b);
-    return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
-  });
+  rows.forEach((u) => { const k = groupKeyOf(u); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(u); });
+  const keys = [...groups.keys()].sort(groupSortOf);
   keys.forEach((k) => {
     const section = h('div', 'progress-group');
     const gh = h('div', 'progress-group-head');
-    gh.appendChild(h('span', 'progress-group-title', '段階 ' + k));
+    gh.appendChild(h('span', 'progress-group-title', groupLabelOf(k)));
     gh.appendChild(h('span', 'progress-group-count', String(groups.get(k).length)));
     section.appendChild(gh);
-    groups.get(k).forEach((r) => section.appendChild(progressRow(r)));
+    groups.get(k).forEach((u) => section.appendChild(progressRow(u, byId, litSet)));
     pgBody.appendChild(section);
   });
 }
 
-function progressRow(r) {
-  const row = h('div', 'progress-row' + (r.level === 'fpu' ? ' is-fpu' : ''));
-  row.appendChild(h('span', 'progress-name', r.name));
+function depChipSuffix(d) {
+  if (d.kind === 'decision') return '（裁定待ち）';
+  if (d.kind === 'stage') return '（段階待ち）';
+  if (d.kind === 'unit') return '（依存: ' + (d.status || '') + '）';
+  return '';
+}
+
+function computeUnmet(u, byId) {
+  return (u.deps || []).map((d) => {
+    if (byId.has(d)) { const t = byId.get(d); return { dep: d, kind: 'unit', resolved: t.status === '完了', status: t.status }; }
+    if (/^Q-/.test(d)) return { dep: d, kind: 'decision', resolved: false };
+    if (/^S[0-6]$/.test(d)) return { dep: d, kind: 'stage', resolved: false };
+    return { dep: d, kind: 'external', resolved: false };
+  }).filter((x) => !x.resolved);
+}
+
+function progressRow(u, byId, litSet) {
+  const isSelected = progressSelected && u.id === progressSelected;
+  const isLit = litSet && litSet.has(u.id);
+  let cls = 'progress-row';
+  if (u.kind === 'fpu') cls += ' is-fpu';
+  if (isSelected) cls += ' is-selected';
+  else if (isLit) cls += ' is-lit';
+  const row = h('div', cls);
+
+  const nm = h('span', 'progress-name', u.title || u.id);
+  nm.appendChild(h('span', 'progress-id', ' ' + u.id));
+  row.appendChild(nm);
+
   const meta = h('div', 'progress-meta');
-  if (r.category) meta.appendChild(h('span', 'chip chip-cat', r.category));
-  if (r.state) meta.appendChild(h('span', 'chip chip-state-' + r.state, r.state));
-  if (r.form && r.form !== '−') meta.appendChild(h('span', 'chip', r.form));
-  if (r.stage) meta.appendChild(h('span', 'chip', r.stage));
-  if (r.taskCount > 0) meta.appendChild(h('span', 'chip chip-task', 'タスク' + r.taskCount));
-  if (r.laneActive) meta.appendChild(h('span', 'chip chip-lane', '稼働'));
-  if (r.testColor) meta.appendChild(h('span', 'chip chip-test-' + r.testColor, r.testColor === 'green' ? '緑' : '赤'));
+  meta.appendChild(h('span', 'chip chip-kind', KIND_LABEL[u.kind] || u.kind));
+  meta.appendChild(h('span', 'chip chip-ust chip-ust-' + u.status, u.status + (u.statusSub ? '（' + u.statusSub + '）' : '')));
+  if (u.status === '待ち' && u.blocked_reason) meta.appendChild(h('span', 'chip chip-blocked', BLOCKED_LABEL[u.blocked_reason] || u.blocked_reason));
+  if (u.stage) meta.appendChild(h('span', 'chip chip-stage', u.stage));
+  if (u.form && u.form !== '−' && u.form !== '-') meta.appendChild(h('span', 'chip', u.form));
+  if (u.taskCount > 0) meta.appendChild(h('span', 'chip chip-task', 'タスク' + u.taskCount));
+  if (u.laneActive) meta.appendChild(h('span', 'chip chip-lane', '稼働'));
+  if (u.testColor) meta.appendChild(h('span', 'chip chip-test-' + u.testColor, u.testColor === 'green' ? '緑' : '赤'));
+  if (u.carryoverCount > 0) meta.appendChild(h('span', 'chip chip-carry', '申し送り' + u.carryoverCount));
   const cbtn = h('button', 'view-comment-btn', '💬');
+  cbtn.onclick = (e) => e.stopPropagation();
   meta.appendChild(cbtn);
   row.appendChild(meta);
-  const quote = r.name + (r.stage ? '（' + r.stage + '/' + (r.state || '') + '）' : '');
-  attachCommentBox(currentCtx, cbtn, row, r.id, r.name, quote);
+
+  const frontier = computeUnmet(u, byId);
+  if (frontier.length) {
+    const fr = h('div', 'progress-frontier');
+    fr.appendChild(h('span', 'progress-frontier-label', 'フロンティア:'));
+    frontier.forEach((d) => {
+      const dc = h('button', 'dep-chip dep-' + d.kind, d.dep + depChipSuffix(d));
+      dc.onclick = (e) => { e.stopPropagation(); selectProgressNode(d.dep); };
+      fr.appendChild(dc);
+    });
+    row.appendChild(fr);
+  }
+
+  row.onclick = () => selectProgressNode(u.id);
+
+  const quote = (u.title || u.id) + '（' + u.kind + '/' + u.stage + '/' + u.status + '）';
+  attachCommentBox(currentCtx, cbtn, row, u.id, u.title, quote);
   return row;
 }
 

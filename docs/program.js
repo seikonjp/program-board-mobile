@@ -589,26 +589,18 @@ export function createProgram(dropbox, config) {
     }
   }
 
-  // 進捗ペイロード（4源泉をアダプタ経由で合成・開いた時のみ取得＝通信量配慮）。
+  // 進捗ペイロード（全源結合・work unit 一望・v2.9・3-2改定・開いた時のみ取得＝通信量配慮）。
   async function loadProgress() {
-    const [censusText, ledgerText, lanesText, testText] = await Promise.all([
+    const [censusText, comText, axisText, ledgerText, lanesText, testText, coText] = await Promise.all([
       readViewText(progressSources.census && progressSources.census.sub),
+      readViewText(progressSources.comTargets && progressSources.comTargets.sub),
+      readViewText(progressSources.progressAxis && progressSources.progressAxis.sub),
       readViewText(progressSources.taskLedger && progressSources.taskLedger.sub),
       readViewText(progressSources.lanes && progressSources.lanes.sub),
       readViewText(progressSources.testStatus && progressSources.testStatus.sub),
+      readViewText(progressSources.carryover && progressSources.carryover.sub),
     ]);
-    const census = P.parseCensus(censusText);
-    const ledger = P.parseTaskLedger(ledgerText);
-    const lanes = P.parseLanes(lanesText);
-    const testMap = P.parseTestStatus(testText);
-    return {
-      rows: P.buildProgressRows(census, ledger, lanes, testMap),
-      skipped: census.skipped,
-      sources: {
-        census: censusText != null, taskLedger: ledgerText != null,
-        lanes: lanesText != null, testStatus: testMap != null,
-      },
-    };
+    return P.buildProgressPayload({ censusText, comText, axisText, ledgerText, lanesText, testText, coText });
   }
 
   function librarySourceById(id) { return librarySources.find((s) => s.id === id) || null; }

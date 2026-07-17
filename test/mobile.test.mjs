@@ -1526,8 +1526,13 @@ test('㉝ program.loadProgress synthesizes 4 sources (open-on-demand) (v2.3)', a
   const p = await program.loadProgress();
   assert.strictEqual(p.sources.census, true);
   assert.strictEqual(p.sources.testStatus, false, 'test_status未存在→false（無表示）');
-  const row = p.rows.find((r) => r.id === 'PL_SP_BSLC');
-  assert.ok(row && row.taskCount === 1 && row.laneActive === true && row.testColor === null, '合成が効く');
+  assert.strictEqual(p.sources.comTargets, false, 'COM_TARGETS未存在→false（無事故）');
+  assert.strictEqual(p.sources.progressAxis, false, 'PROGRESS_AXIS未存在→false（後方互換）');
+  assert.strictEqual(p.sources.carryover, false);
+  const row = p.units.find((r) => r.id === 'PL_SP_BSLC');
+  assert.ok(row && row.taskCount === 1 && row.laneActive === true && row.testColor === null, '合成（overlay）が効く');
+  assert.strictEqual(row.status, '完了', 'census 実装→統一 完了');
+  assert.ok(Array.isArray(p.externalNodes) && p.reverseClosure && typeof p.counts.total === 'number', 'work unit payload の形');
 });
 
 // ---------------------------------------------------------------------------
@@ -1706,4 +1711,131 @@ test('㊴ sessions view: wiring + program delegation + launch disabled=Macで起
   // config に sessions ソースが宣言され、群配線されている
   assert.strictEqual(viewGroup('sessions'), 'sessions', 'sessions は sessions 群');
   assert.ok(APP_CONFIG.sessionsSub, 'config に sessionsSub が宣言される');
+});
+
+// ---------------------------------------------------------------------------
+// ㊵ 進捗軸 parseProgressAxis: §6表・deps3種・空/未存在の無事故（v2.9・Mac版互換）
+// ---------------------------------------------------------------------------
+test('㊵ parseProgressAxis: §6 table, deps 3 kinds, empty/missing graceful (v2.9)', () => {
+  const md = [
+    '## §5 前段',
+    '| id | kind | title | stage | status | blocked_reason | deps | source |',
+    '| WU-X | data | 混入NG | S0 | 待ち | 裁定 | Q-99 | x |',
+    '## §6 作業単位台帳',
+    '| id | kind | title | stage | status | blocked_reason | deps | source |',
+    '|----|------|-------|-------|--------|----------------|------|--------|',
+    '| WU-DATA-01 | data | 種カタログ | S0 | 待ち | 裁定 | Q-01, Q-02 | STAGE_PLAN |',
+    '| WU-INFRA-05 | infra | 導出 | S0 | 待ち | 依存 | WU-INFRA-04, Q-17 | X |',
+    '| WU-DATA-05 | data | 名寄せ | S5 | 待ち | 順番 | S5 | Y |',
+    '| WU-TEST-07 | test | 観察 | S1 | 完了 | — | — | Z |',
+    '| WU-BAD | data | 列不足 | S0 |',
+  ].join('\n');
+  const { units, skipped } = P.parseProgressAxis(md);
+  assert.strictEqual(units.length, 4);
+  assert.strictEqual(skipped, 1);
+  assert.ok(!units.some((u) => u.title === '混入NG'), '§5の表は拾わない');
+  assert.deepStrictEqual(units.find((u) => u.id === 'WU-DATA-01').deps, ['Q-01', 'Q-02']);
+  assert.deepStrictEqual(units.find((u) => u.id === 'WU-INFRA-05').deps, ['WU-INFRA-04', 'Q-17']);
+  assert.deepStrictEqual(units.find((u) => u.id === 'WU-DATA-05').deps, ['S5']);
+  const t7 = units.find((u) => u.id === 'WU-TEST-07');
+  assert.deepStrictEqual(t7.deps, []); assert.strictEqual(t7.blocked_reason, null); assert.strictEqual(t7.status, '完了');
+  assert.deepStrictEqual(P.parseProgressAxis(null), { units: [], skipped: 0 });
+  assert.deepStrictEqual(P.parseProgressAxis('## §6 空\n本文'), { units: [], skipped: 0 });
+});
+
+// ---------------------------------------------------------------------------
+// ㊶ 統一状態写像 + COM 導出 + CARRYOVER（v2.9・Mac版互換）
+// ---------------------------------------------------------------------------
+test('㊶ normalizeWorkStatus + deriveComStatus + carryover (v2.9)', () => {
+  assert.deepStrictEqual(P.normalizeWorkStatus('実装'), { status: '完了', sub: null });
+  assert.deepStrictEqual(P.normalizeWorkStatus('一部'), { status: '進行中', sub: null });
+  assert.deepStrictEqual(P.normalizeWorkStatus('未実装'), { status: '未着手', sub: null });
+  assert.deepStrictEqual(P.normalizeWorkStatus('将来想定'), { status: '対象外', sub: null });
+  assert.deepStrictEqual(P.normalizeWorkStatus('謎'), { status: '不明', sub: '謎' });
+
+  const { records, skipped } = P.parseComTargets([
+    '## G1 計画骨格', '- [ ] site（敷地）[W/S] [済/S6/S2/済]', '- [ ] directionSymbol（方位）[S] [-/済/-/-]',
+    '## 集計', '| 段階 | x |',
+  ].join('\n'));
+  assert.strictEqual(skipped, 0); assert.strictEqual(records.length, 2, '集計表は非該当');
+  assert.deepStrictEqual(P.deriveComStatus(['済', 'S6', 'S2', '済']), { status: '進行中', stage: 'S2', sub: null });
+  assert.deepStrictEqual(P.deriveComStatus(['-', '済', '-', '-']), { status: '完了', stage: '済', sub: null });
+  assert.deepStrictEqual(P.deriveComStatus(['S4', 'S4', 'S4', 'S4']), { status: '未着手', stage: 'S4', sub: null });
+  assert.strictEqual(P.deriveComStatus(['済', 'X9', '-', '-']).status, '不明');
+
+  const { rows } = P.parseCarryover([
+    '| CO-01 | feature | UI_EXP_SUN・UI_EXP_ENV | 中 | QC_JG_SUN 基盤 | S4 | C-U0001 | 現役 |',
+    '| CO-02 | cmp | CM07(ADJ)・CN_ST_MDL | 中 | x | S0 | C-U0002 | 現役 |',
+  ].join('\n'));
+  assert.strictEqual(rows.length, 2);
+  assert.strictEqual(P.carryoverCountFor(rows, { id: 'UI_EXP_SUN' }), 1);
+  assert.strictEqual(P.carryoverCountFor(rows, { id: 'CN_ST_MDL' }), 1);
+  assert.strictEqual(P.carryoverCountFor(rows, { id: 'site' }), 0);
+});
+
+// ---------------------------------------------------------------------------
+// ㊷ 逆引き純関数 reverseClosure: 推移閉包・循環でも無限ループしない（v2.9・Mac版互換）
+// ---------------------------------------------------------------------------
+test('㊷ reverseClosure: transitive closure, cycle-safe (v2.9)', () => {
+  const units = [
+    { id: 'A', status: '待ち', deps: ['Q-01'] },
+    { id: 'B', status: '待ち', deps: ['Q-01'] },
+    { id: 'C', status: '待ち', deps: ['A'] },
+    { id: 'D', status: '待ち', deps: ['C'] },
+    { id: 'E', status: '待ち', deps: ['S1'] },
+  ];
+  assert.deepStrictEqual([...P.reverseClosure('Q-01', units)].sort(), ['A', 'B', 'C', 'D']);
+  assert.deepStrictEqual([...P.reverseClosure('S1', units)], ['E']);
+  assert.deepStrictEqual([...P.reverseClosure('Z-x', units)], []);
+  const cyc = [
+    { id: 'X', status: '待ち', deps: ['Y'] }, { id: 'Y', status: '待ち', deps: ['X'] }, { id: 'W', status: '待ち', deps: ['X'] },
+  ];
+  assert.deepStrictEqual([...P.reverseClosure('X', cyc)].sort(), ['W', 'X', 'Y'], '循環でも全到達（無限ループなし）');
+  const byId = new Map(units.map((u) => [u.id, u]));
+  byId.set('A', { id: 'A', status: '完了', deps: [] });
+  assert.strictEqual(P.unmetDeps({ id: 'C', deps: ['A'] }, byId).length, 0, 'depが完了→フロンティアから消える');
+  assert.deepStrictEqual(P.unmetDeps({ id: 'B', deps: ['Q-01'] }, byId).map((x) => x.kind), ['decision']);
+});
+
+// ---------------------------------------------------------------------------
+// ㊸ buildProgressPayload 統合 + awaiting-impl + views 配線（v2.9）
+// ---------------------------------------------------------------------------
+test('㊸ buildProgressPayload integration + awaiting-impl + views wiring (v2.9)', () => {
+  const payload = P.buildProgressPayload({
+    censusText: ['## §1 x', '### PL（p）', '- [ ] **基準系**（PL_SP_BSLC）', '  - [ ] 基準線 — d [実装/AG/済]'].join('\n'),
+    comText: ['## G1 x', '- [ ] site（敷地）[W/S] [済/S6/S2/済]'].join('\n'),
+    axisText: ['## §6 t', '| id | kind | title | stage | status | blocked_reason | deps | source |', '|--|--|--|--|--|--|--|--|', '| WU-INFRA-01 | infra | 名寄せ | S0 | 待ち | 裁定 | Q-01 | X |'].join('\n'),
+    ledgerText: null, lanesText: null, testText: null,
+    coText: '| CO-1 | feature | PL_SP_BSLC | 中 | x | y | z | 現役 |',
+  });
+  assert.strictEqual(payload.counts.total, 3);
+  const kinds = payload.units.map((u) => u.kind);
+  assert.ok(kinds.includes('fpu') && kinds.includes('com') && kinds.includes('infra'));
+  assert.strictEqual(payload.units.find((u) => u.id === 'PL_SP_BSLC').carryoverCount, 1);
+  assert.strictEqual(payload.units.find((u) => u.id === 'site').status, '進行中');
+  assert.deepStrictEqual(payload.reverseClosure['Q-01'], ['WU-INFRA-01'], 'Q-01逆引き点灯');
+
+  // awaiting-impl: STATUS_ORDER / STATUS_LABEL / 処遇マーカー→
+  assert.ok(P.STATUS_ORDER.includes('awaiting-impl'));
+  assert.strictEqual(P.STATUS_LABEL['awaiting-impl'], '実装待ち');
+  assert.strictEqual(P.treatmentMarker('awaiting-impl', 'report'), '→');
+
+  // views.js が work unit 一望へ配線されている
+  const v = readDoc('views/views.js');
+  assert.ok(v.includes('reverseClosure') && v.includes('selectProgressNode'), 'フロンティア逆引きの配線');
+  assert.ok(v.includes('progress-frontier') && v.includes('chip-ust-'), 'フロンティア表示＋統一状態チップ');
+});
+
+// ---------------------------------------------------------------------------
+// ㊹ 実データ量の確認（読み取りのみ・PROGRESS_AXIS §6=55行が一望に乗る）（v2.9）
+// ---------------------------------------------------------------------------
+test('㊹ real data: PROGRESS_AXIS §6 all 55 rows parse (read-only) (v2.9)', () => {
+  const axisPath = resolve(HERE, '..', '..', '..', 'Program', 'PROGRESS_AXIS.md');
+  let text;
+  try { text = readFileSync(axisPath, 'utf8'); } catch { return; }
+  const { units, skipped } = P.parseProgressAxis(text);
+  assert.strictEqual(skipped, 0);
+  assert.strictEqual(units.length, 55, '§6=55作業単位が全てparse');
+  const kinds = new Set(units.map((u) => u.kind));
+  ['data', 'infra', 'framework', 'doc', 'ui', 'test'].forEach((k) => assert.ok(kinds.has(k)));
 });

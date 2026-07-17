@@ -10,7 +10,7 @@
 // 表示ラベル（純粋データ・UI/索引で共用）
 // ---------------------------------------------------------------------------
 
-export const STATUS_ORDER = ['new', 'annotated', 'waiting', 'carried', 'kept', 'review', 'responded', 'done-proposed', 'consumed'];
+export const STATUS_ORDER = ['new', 'annotated', 'waiting', 'carried', 'kept', 'awaiting-impl', 'review', 'responded', 'done-proposed', 'consumed'];
 
 // 状態(status)は表示のみ日本語化（v1.6・語彙は 2026-07-17 整理版＝正=カード凡例 C-U0000）。
 // ファイル内部の値は英語のまま（frontmatter は不変）。
@@ -25,6 +25,7 @@ export const STATUS_LABEL = {
   consumed: '完了',         // 旧「消化」
   carried: '申し送り',      // CARRYOVER へ寝かせた（ROLES §1-1b・2026-07-17新設・保留グループ）
   kept: '参考',            // AI が「残す・追加対応なし」と判定した処遇（v2.8.1・2026-07-17・保留グループ・型と処遇の分離＝凡例 C-U0000）
+  'awaiting-impl': '実装待ち', // 反映承認済み・実装作業起票済み・順番/依存/容量で着手待ち（v2.9・2026-07-17・保留グループ・→マーカー）
 };
 
 // Board の列は種類(type)別（v1.6）。この6種・この順（タブ名と同形の英語見出し）。
@@ -197,7 +198,7 @@ export function statusLabel(status, type) {
 export function treatmentMarker(status, type) {
   if (status === 'done-proposed') return '✓hollow';
   if (status === 'consumed') return '✓filled';
-  if (status === 'waiting' || status === 'carried' || status === 'kept') return '→';
+  if (status === 'waiting' || status === 'carried' || status === 'kept' || status === 'awaiting-impl') return '→';
   return null;
 }
 
@@ -1026,6 +1027,267 @@ export function buildProgressRows(censusRes, ledgerRes, lanesRes, testStatusMap)
     laneActive: laneActiveFor(lanes, r),
     testColor: testColorFor(testStatusMap, r),
   }));
+}
+
+// ===========================================================================
+// 進捗軸（work unit）層（v2.9・3-2改定・2026-07-17）——Mac版 server.js と挙動互換。
+// 全源（census=feature/fpu・COM_TARGETS=com・PROGRESS_AXIS §6=data/infra/…）を
+// 「作業単位」共通スキーマ（id/kind/title/stage/status/blocked_reason/deps/source）へ結合。
+// ===========================================================================
+
+// 統一状態語彙6値（PROGRESS_AXIS §2）。
+export const UNIFIED_STATUS = ['未着手', '待ち', '進行中', '完了', '対象外', '不明'];
+const STATUS_ABSORB = {
+  '実装': '完了', '一部': '進行中', '未実装': '未着手', '線外': '対象外', '将来想定': '対象外', '不明': '不明',
+  '現役': '進行中', '完了': '完了', '休眠': '未着手', '資料庫': '対象外', '退役': '対象外',
+  '未着手': '未着手', '待ち': '待ち', '進行中': '進行中', '対象外': '対象外',
+};
+
+// 生statusを統一6値へ正規化。写像不能値→「不明」＋生値 sub（§2）。
+export function normalizeWorkStatus(raw) {
+  const r = String(raw == null ? '' : raw).trim();
+  if (STATUS_ABSORB[r]) return { status: STATUS_ABSORB[r], sub: null };
+  return { status: '不明', sub: r || null };
+}
+
+// deps セル → トークン配列（WU-*/Q-*/S0〜S6・"—"=空）。
+export function parseDeps(cell) {
+  const s = String(cell == null ? '' : cell).trim();
+  if (s === '' || s === '—' || s === '-' || s === '−') return [];
+  return s.split(/[,、]/).map((t) => t.trim()).filter((t) => t && t !== '—' && t !== '-' && t !== '−');
+}
+
+// PROGRESS_AXIS.md §6 の md 表 → work unit 配列（8列）。未存在・§6無し・空表でも壊れない。
+export function parseProgressAxis(text) {
+  const lines = String(text == null ? '' : text).split('\n');
+  const units = [];
+  let skipped = 0;
+  let inSix = false;
+  for (const line of lines) {
+    if (/^##\s+/.test(line)) { inSix = /^##\s+§\s*6\b/.test(line); continue; }
+    if (!inSix) continue;
+    if (!/^\s*\|/.test(line)) continue;
+    const cells = line.split('|').slice(1, -1).map((c) => c.trim());
+    if (cells.length === 0) continue;
+    if (cells.every((c) => /^:?-{2,}:?$/.test(c) || c === '')) continue;
+    if (cells[0].toLowerCase() === 'id') continue;
+    if (cells.length < 8) { skipped++; continue; }
+    const id = cells[0];
+    if (!id) { skipped++; continue; }
+    const br = cells[5];
+    const norm = normalizeWorkStatus(cells[4]);
+    units.push({
+      id, kind: cells[1], title: cells[2], stage: cells[3],
+      status: norm.status, statusRaw: cells[4], statusSub: norm.sub,
+      blocked_reason: (br === '—' || br === '-' || br === '−' || br === '') ? null : br,
+      deps: parseDeps(cells[6]), source: cells[7] || '本台帳',
+    });
+  }
+  return { units, skipped };
+}
+
+// COM_FUNCTION_TARGETS.md → com レコード列（`## G\d+` グループ内のみ・崩れ行 skip）。
+const COM_LINE_RE = /^\s*-\s+\[[ xX]\]\s+(.+?)（([^）]*)）\s*\[([^\]]*)\]\s*\[([^\]]*)\]/;
+export function parseComTargets(text) {
+  const lines = String(text == null ? '' : text).split('\n');
+  const records = [];
+  let skipped = 0;
+  let group = null;
+  for (const line of lines) {
+    const gm = /^##\s+(G\d+)\b\s*(.*)$/.exec(line);
+    if (/^##\s+/.test(line)) { group = gm ? (gm[1] + (gm[2] ? ' ' + gm[2].trim() : '')) : null; continue; }
+    if (!group) continue;
+    if (!/^\s*-\s+\[[ xX]\]/.test(line)) continue;
+    const m = COM_LINE_RE.exec(line);
+    if (!m) { skipped++; continue; }
+    const rawName = m[1].trim();
+    const jp = m[2].trim();
+    const tags = m[3].trim();
+    const slots = m[4].split('/').map((s) => s.trim());
+    if (slots.length !== 4) { skipped++; continue; }
+    const cat = /^(G\d+)/.exec(group);
+    records.push({ id: rawName, jp, tags, slots, title: rawName + '（' + jp + '）', group, category: cat ? cat[1] : null });
+  }
+  return { records, skipped };
+}
+
+// com の [AG/MG/AE/ME] → 統一status＋stage（全済→完了/一部済→進行中/済ゼロ→未着手・stage=残り最早段階）。
+export function deriveComStatus(slots) {
+  const NA = new Set(['-', '−', '']);
+  const applicable = (slots || []).filter((s) => !NA.has(s));
+  if (applicable.length === 0) return { status: '対象外', stage: '—', sub: null };
+  const isStage = (s) => /^S[0-6]$/.test(s);
+  const unknown = applicable.filter((s) => s !== '済' && !isStage(s));
+  const stages = applicable.filter(isStage).map((s) => Number(s.slice(1)));
+  const earliest = stages.length ? 'S' + Math.min(...stages) : '不明';
+  if (unknown.length) return { status: '不明', stage: stages.length ? earliest : '不明', sub: unknown.join(',') };
+  const done = applicable.filter((s) => s === '済').length;
+  if (done === applicable.length) return { status: '完了', stage: '済', sub: null };
+  if (done === 0) return { status: '未着手', stage: earliest, sub: null };
+  return { status: '進行中', stage: earliest, sub: null };
+}
+
+// CARRYOVER.md §台帳 → CO 行（tokens=宛先ID+内容の大文字IDトークン）。
+const CO_TOKEN_RE = /WU-[A-Z]+-\d+|[A-Z][A-Z0-9_]{2,}/g;
+export function parseCarryover(text) {
+  const lines = String(text == null ? '' : text).split('\n');
+  const rows = [];
+  for (const line of lines) {
+    if (!/^\s*\|\s*CO-\d+/.test(line)) continue;
+    const cells = line.split('|').slice(1, -1).map((c) => c.trim());
+    if (cells.length < 5) continue;
+    const hay = (cells[2] || '') + ' ' + (cells[4] || '');
+    const tokens = hay.match(CO_TOKEN_RE) || [];
+    rows.push({ id: cells[0], kind: cells[1], target: cells[2], content: cells[4], tokens: [...new Set(tokens)] });
+  }
+  return { rows };
+}
+
+// 該当 work unit の CARRYOVER 件数（IDトークンと unit.id の完全一致）。
+export function carryoverCountFor(coRows, unit) {
+  const id = unit && unit.id;
+  if (!id || !coRows) return 0;
+  return coRows.filter((co) => co.tokens.includes(id)).length;
+}
+
+// 全源 → 作業単位共通スキーマへ結合（overlays 付与）。
+export function buildWorkUnits(censusRes, comRes, axisRes, ledgerRes, lanesRes, testStatusMap, coRes) {
+  const entries = (ledgerRes && ledgerRes.entries) || [];
+  const lanes = (lanesRes && lanesRes.lanes) || [];
+  const coRows = (coRes && coRes.rows) || [];
+  const units = [];
+  for (const r of ((censusRes && censusRes.records) || [])) {
+    if (!r.hasTag) continue;
+    const id = r.joinKey || r.fpu || r.name;
+    const norm = normalizeWorkStatus(r.state);
+    units.push({
+      id, kind: r.level, title: r.name, stage: r.stage,
+      status: norm.status, statusRaw: r.state, statusSub: norm.sub,
+      blocked_reason: null, deps: [], source: 'census',
+      category: r.category, form: r.form, level: r.level,
+    });
+  }
+  for (const r of ((comRes && comRes.records) || [])) {
+    const d = deriveComStatus(r.slots);
+    units.push({
+      id: r.id, kind: 'com', title: r.title, stage: d.stage,
+      status: d.status, statusRaw: r.slots.join('/'), statusSub: d.sub,
+      blocked_reason: null, deps: [], source: 'COM_TARGETS',
+      category: r.category, form: r.tags, level: 'com',
+    });
+  }
+  for (const u of ((axisRes && axisRes.units) || [])) {
+    units.push({
+      id: u.id, kind: u.kind, title: u.title, stage: u.stage,
+      status: u.status, statusRaw: u.statusRaw, statusSub: u.statusSub,
+      blocked_reason: u.blocked_reason, deps: u.deps.slice(), source: u.source,
+      category: null, form: null, level: u.kind,
+    });
+  }
+  for (const u of units) {
+    u.taskCount = countTasksFor(entries, u.id, u.title);
+    u.laneActive = laneActiveFor(lanes, { joinKey: u.id, name: u.title });
+    u.testColor = testColorFor(testStatusMap, { joinKey: u.id, name: u.title });
+    u.carryoverCount = carryoverCountFor(coRows, u);
+  }
+  return units;
+}
+
+// ---- フロンティア（依存の可視化）純関数 ----
+
+export function depState(dep, byId) {
+  if (byId.has(dep)) {
+    const u = byId.get(dep);
+    return { dep, kind: 'unit', resolved: u.status === '完了', status: u.status };
+  }
+  if (/^Q-/.test(dep)) return { dep, kind: 'decision', resolved: false, status: null };
+  if (/^S[0-6]$/.test(dep)) return { dep, kind: 'stage', resolved: false, status: null };
+  return { dep, kind: 'external', resolved: false, status: null };
+}
+
+export function unmetDeps(unit, byId) {
+  return (unit.deps || []).map((d) => depState(d, byId)).filter((x) => !x.resolved);
+}
+
+export function buildReverseIndex(units) {
+  const idx = new Map();
+  for (const u of units) {
+    for (const d of (u.deps || [])) {
+      if (!idx.has(d)) idx.set(d, []);
+      idx.get(d).push(u.id);
+    }
+  }
+  return idx;
+}
+
+// node に推移的に依存する全 unit.id 集合（循環でも無限ループしない）。
+export function reverseClosure(nodeId, units, reverseIndex) {
+  const idx = reverseIndex || buildReverseIndex(units);
+  const result = new Set();
+  const stack = [nodeId];
+  while (stack.length) {
+    const cur = stack.pop();
+    for (const dependent of (idx.get(cur) || [])) {
+      if (!result.has(dependent)) { result.add(dependent); stack.push(dependent); }
+    }
+  }
+  return result;
+}
+
+export function buildReverseClosureMap(units) {
+  const idx = buildReverseIndex(units);
+  const nodes = new Set();
+  for (const u of units) { nodes.add(u.id); for (const d of (u.deps || [])) nodes.add(d); }
+  const map = {};
+  for (const n of nodes) {
+    const set = reverseClosure(n, units, idx);
+    if (set.size) map[n] = [...set];
+  }
+  return map;
+}
+
+export function externalNodes(units) {
+  const ids = new Set(units.map((u) => u.id));
+  const seen = new Map();
+  for (const u of units) {
+    for (const d of (u.deps || [])) {
+      if (ids.has(d) || seen.has(d)) continue;
+      const kind = /^Q-/.test(d) ? 'decision' : (/^S[0-6]$/.test(d) ? 'stage' : 'external');
+      seen.set(d, kind);
+    }
+  }
+  return [...seen.entries()].map(([id, kind]) => ({ id, kind }));
+}
+
+// 進捗ペイロード（全源結合・Mac progressPayload と同形）。
+export function buildProgressPayload(sources) {
+  const census = parseCensus(sources.censusText);
+  const com = parseComTargets(sources.comText);
+  const axis = parseProgressAxis(sources.axisText);
+  const ledger = parseTaskLedger(sources.ledgerText);
+  const lanes = parseLanes(sources.lanesText);
+  const testMap = parseTestStatus(sources.testText);
+  const co = parseCarryover(sources.coText);
+  const units = buildWorkUnits(census, com, axis, ledger, lanes, testMap, co);
+  const byKind = {};
+  for (const u of units) byKind[u.kind] = (byKind[u.kind] || 0) + 1;
+  return {
+    units,
+    reverseClosure: buildReverseClosureMap(units),
+    externalNodes: externalNodes(units),
+    counts: { total: units.length, byKind },
+    skipped: { census: census.skipped, com: com.skipped, axis: axis.skipped },
+    coRows: co.rows.length,
+    sources: {
+      census: sources.censusText != null,
+      comTargets: sources.comText != null,
+      progressAxis: sources.axisText != null,
+      taskLedger: sources.ledgerText != null,
+      lanes: sources.lanesText != null,
+      testStatus: testMap != null,
+      carryover: sources.coText != null,
+    },
+  };
 }
 
 // ライブラリmd項目の見出しブロック（目次/コメント用・parseSheetBlocks を level>=1 で再利用）。
