@@ -229,13 +229,19 @@ export function createProgram(dropbox, config) {
     await regenerateIndex();
   }
 
-  // ---- 完了ボタン（1-2）: done-proposed のカードをユーザーが完了確定 → consumed + 完了確定行（v2.1） ----
+  // ---- 完了ボタン（1-2）: done-proposed／carried のカードをユーザーが完了確定 → consumed + 完了確定行 ----
+  // carried は CARRYOVER に内容保全済み＝閉じてよい状態（2026-07-17・S-0006吸収）。
+  // データ層の検証: 対象は done-proposed か carried のみ（他 status は完了ボタン非表示のため到達しない）。
   async function confirmDone(id) {
     const dir = await findCardDir(id);
     if (!dir) throw new Error('カードが見つかりません: ' + id);
     const mdPath = join(cardsRoot, dir, 'card.md');
     await dropbox.updateTextFileWithRetry(mdPath, (text) => {
       const card = P.parseCard(text);
+      const st = card.raw && card.raw.status;
+      if (st !== 'done-proposed' && st !== 'carried') {
+        throw new Error('完了確定できるのは 完了提案(done-proposed) か 申し送り(carried) のカードのみです（現在: ' + (st || '—') + '）');
+      }
       card.body = P.appendUnderHeading(card.body, '処理記録', P.buildDoneConfirmLine(P.nowStamp(), RESP_MARK));
       P.setField(card, 'status', 'consumed');
       return P.serializeCard(card);

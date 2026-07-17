@@ -13,6 +13,25 @@ export function h(tag, cls, text) {
   return e;
 }
 
+// 処遇マーカーの DOM 要素（title 末尾右／status・type から自動導出・2026-07-17）。付かない場合は null。
+function treatmentMarkerEl(status, type) {
+  const m = P.treatmentMarker(status, type);
+  if (!m) return null;
+  const glyph = (m === '→') ? '→' : '✓';
+  const variant = m === '✓hollow' ? 'is-hollow' : (m === '✓filled' ? 'is-filled' : 'is-hold');
+  const span = h('span', 'treat ' + variant, glyph);
+  span.title = m === '✓hollow' ? '完了提案（AIが提案・確定待ち）' : (m === '✓filled' ? '完了' : '保留（先送り／申し送り／参考）');
+  return span;
+}
+// タイトル要素（テキスト＋末尾右の処遇マーカー）。tag は 'div'（タイル）/ 'h2'（詳細）。
+function makeTitleEl(tag, cls, title, status, type) {
+  const wrap = h(tag, cls);
+  wrap.appendChild(h('span', 'title-text', title || '（無題）'));
+  const mk = treatmentMarkerEl(status, type);
+  if (mk) wrap.appendChild(mk);
+  return wrap;
+}
+
 // 一覧タイル（全 type 統一）: サムネイル（画像があれば先頭1枚・なければ出さない）＋タイトル＋chip列。
 // opts.showType=true のとき type chip を出す（種類が列で分からないタブで付与）。
 // 状態(status) chip（日本語）は全タブのタイルに常に出す（v1.6）。
@@ -26,11 +45,11 @@ export function cardTile(ctx, card, opts) {
     t.appendChild(img);
   }
   const body = h('div', 'card-tile-body');
-  body.appendChild(h('div', 'card-tile-title', card.title || '（無題）'));
+  body.appendChild(makeTitleEl('div', 'card-tile-title', card.title, card.status, card.type));
   const meta = h('div', 'card-meta');
   meta.appendChild(h('span', 'chip chip-id', card.id));
   if (o.showType && card.type) meta.appendChild(h('span', 'chip', P.typeLabel(card.type)));
-  if (card.status) meta.appendChild(h('span', 'chip chip-status', P.STATUS_LABEL[card.status] || card.status));
+  if (card.status) meta.appendChild(h('span', 'chip chip-status', P.statusLabel(card.status, card.type)));
   if (card.subject) meta.appendChild(h('span', 'chip', '主題: ' + card.subject));
   (card.target || []).forEach((tg) => meta.appendChild(h('span', 'chip chip-target', '対象: ' + tg)));
   if (card.archived) meta.appendChild(h('span', 'chip chip-archived', 'アーカイブ'));
@@ -61,7 +80,7 @@ export function openCardDetail(ctx, card) {
   dSheet.innerHTML = '';
 
   const head = h('div', 'sheet-head');
-  head.appendChild(h('h2', null, card.title || '（無題）'));
+  head.appendChild(makeTitleEl('h2', 'detail-title', card.title, card.status, card.type));
   const close = h('button', 'icon-btn', '×');
   close.onclick = () => { dBackdrop.hidden = true; };
   head.appendChild(close);
@@ -76,7 +95,7 @@ export function openCardDetail(ctx, card) {
   if (card.subject) meta.appendChild(h('span', 'chip', '主題: ' + card.subject));
   (card.tags || []).forEach((tag) => meta.appendChild(h('span', 'chip', '#' + tag)));
   (card.target || []).forEach((tg) => meta.appendChild(h('span', 'chip chip-target', '対象: ' + tg)));
-  if (card.status) meta.appendChild(h('span', 'chip chip-status', P.STATUS_LABEL[card.status] || card.status));
+  if (card.status) meta.appendChild(h('span', 'chip chip-status', P.statusLabel(card.status, card.type)));
   if (card.surface) meta.appendChild(h('span', 'chip', '浮上: ' + card.surface));
   if (card.archived) meta.appendChild(h('span', 'chip chip-archived', 'アーカイブ'));
   body.appendChild(meta);
@@ -98,8 +117,8 @@ export function openCardDetail(ctx, card) {
 
   // アーカイブは読み取り専用（操作系・target編集は出さない・v2.1）。
   if (!card.archived) {
-    // 完了ボタン（1-2）: status=done-proposed のカードは型・方向を問わず表示。
-    if (card.status === 'done-proposed') addDoneButton(ctx, body, card);
+    // 完了ボタン（1-2）: status=done-proposed／carried のカードは型・方向を問わず表示（carried は 2026-07-17）。
+    if (card.status === 'done-proposed' || card.status === 'carried') addDoneButton(ctx, body, card);
     // target 欄の後付け編集（1-3・ユーザー発/AI発どちらでも）。
     addTargetEditor(ctx, body, card);
     // 操作系（v2.1・詳細=応答配線）。
@@ -198,7 +217,10 @@ async function sendRespond(ctx, card, kind, opts, btns) {
 // 完了ボタン（1-2）。status=done-proposed のカードでユーザーが完了確定 → consumed + 完了確定行。
 function addDoneButton(ctx, wrap, card) {
   const box = h('div', 'detail-done');
-  box.appendChild(h('p', 'view-hint', 'AI側から完了が提案されています。'));
+  const hint = card.status === 'carried'
+    ? '申し送り済み（内容は CARRYOVER に保全）。閉じてよい状態です。'
+    : 'AI側から完了が提案されています。';
+  box.appendChild(h('p', 'view-hint', hint));
   const btn = h('button', 'btn-primary op-done', '完了にする');
   btn.onclick = async () => {
     btn.disabled = true;

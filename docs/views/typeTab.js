@@ -61,9 +61,9 @@ export function makeTypeTabView({ id, tabLabel, type, hint }) {
     const terms = q ? q.split(/\s+/).filter(Boolean) : [];
 
     let cards = P.cardsForType(ctx.state.cards, type);
-    // 検索時のみアーカイブを含める（一覧はアーカイブ除外・v2.1）。
+    // 検索時はアーカイブ・完了(consumed)も含める（到達可）。既定一覧はどちらも除外（v2.1・完了は2026-07-17）。
     if (terms.length) cards = cards.filter((c) => matches(c, terms));
-    else cards = cards.filter((c) => !c.archived);
+    else cards = cards.filter((c) => !c.archived && c.status !== 'consumed');
 
     listEl.innerHTML = '';
     if (cards.length === 0) {

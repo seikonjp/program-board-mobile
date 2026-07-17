@@ -17,7 +17,7 @@ function create(ctx) {
   root = h('div', 'tray');
   const head = h('div', 'view-head');
   head.appendChild(h('h2', null, '検収トレイ'));
-  head.appendChild(h('p', 'view-hint', '完成・動作報告の検収。OK＝消化／NG＝コメント必須／あとで＝保留。'));
+  head.appendChild(h('p', 'view-hint', '完成・動作報告の検収。OK＝完了／NG＝コメント必須／あとで＝保留。'));
   root.appendChild(head);
   listEl = h('div', 'tray-list');
   root.appendChild(listEl);

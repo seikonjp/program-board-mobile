@@ -28,7 +28,7 @@ export const config = {
   // ビュー有効化リスト（登録制＋群・v2.2）。
   // 将来ビューを増やすときは docs/views/<id>.js を追加し、ここに 1 行足すだけで有効化できる
   //（app.js など既存コードを編集しない設計）。group で最上位ナビ（Cards/Sheets/Views/Sessions）へ束ねる。
-  // Cards 群タブ順（v1.8）: Board / Reference / Knowledge / Consult / Decision / Report / Review(=tray) / Memo。
+  // Cards 群タブ順（v1.8＋完了ビュー2026-07-17）: Board / Reference / Knowledge / Consult / Decision / Report / Review(=tray) / Memo / 完了。
   views: [
     { id: 'board', enabled: true, group: 'cards' },
     { id: 'reference', enabled: true, group: 'cards' },
@@ -38,6 +38,8 @@ export const config = {
     { id: 'report', enabled: true, group: 'cards' },
     { id: 'tray', enabled: true, group: 'cards' },
     { id: 'memo', enabled: true, group: 'cards' },
+    { id: 'completed', enabled: true, group: 'cards' }, // 完了ビュー（consumed＋アーカイブ・2026-07-17）
+
     { id: 'sheets', enabled: true, group: 'sheets' },
     // Views / Sessions は Phase 3/4 で実装予定＝準備中の空状態のみ（タブは出す）。
     { id: 'views', enabled: true, group: 'views' },

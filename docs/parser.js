@@ -10,18 +10,20 @@
 // 表示ラベル（純粋データ・UI/索引で共用）
 // ---------------------------------------------------------------------------
 
-export const STATUS_ORDER = ['new', 'annotated', 'waiting', 'review', 'responded', 'done-proposed', 'consumed'];
+export const STATUS_ORDER = ['new', 'annotated', 'waiting', 'carried', 'review', 'responded', 'done-proposed', 'consumed'];
 
-// 状態(status)は表示のみ日本語化（v1.6）。ファイル内部の値は英語のまま（frontmatter は不変）。
-// UI のタイル/詳細 chip と CARD_INDEX の状態列がこの日本語ラベルを使う。type/direction は英語のまま。
+// 状態(status)は表示のみ日本語化（v1.6・語彙は 2026-07-17 整理版＝正=カード凡例 C-U0000）。
+// ファイル内部の値は英語のまま（frontmatter は不変）。
+// UI のタイル/詳細 chip は type 考慮の statusLabel()、CARD_INDEX の状態列は素の STATUS_LABEL を使う。
 export const STATUS_LABEL = {
   new: '新規',
-  annotated: '注釈済み',
-  waiting: '浮上待ち',
-  review: '検収待ち',
-  responded: '応答済み',    // decision の選択済み（v2.1・統括の伝播待ち）
+  annotated: '確認済み',    // 旧「注釈済み」
+  waiting: '保留',          // 旧「浮上待ち」
+  review: '対応待ち',       // 旧「検収待ち」
+  responded: 'AI対応中',    // 旧「応答済み」・decision の選択済み（統括の伝播待ち）
   'done-proposed': '完了提案', // 完了提案（v2.1・ユーザーの完了確定待ち）
-  consumed: '消化',
+  consumed: '完了',         // 旧「消化」
+  carried: '申し送り',      // CARRYOVER へ寝かせた（ROLES §1-1b・2026-07-17新設・保留グループ）
 };
 
 // Board の列は種類(type)別（v1.6）。この6種・この順（タブ名と同形の英語見出し）。
@@ -178,6 +180,40 @@ export function boardColumns(cards) {
     label: BOARD_COLUMN_LABEL[type],
     cards: cardsForType(cards, type),
   }));
+}
+
+// status の表示ラベル（純粋関数・2026-07-17）。内部値→表示語彙。
+// reference/knowledge は「残す=消化しない」ストック型: status が既定的（new/annotated/空）のときは「参考」。
+// ただし具体的な状態（carried/waiting/done-proposed/consumed/review/responded）が付いていればそちらが優先
+//（例: reference+carried → 「申し送り」）。CARD_INDEX の状態列は type 非依存の素の STATUS_LABEL を使う。
+export function statusLabel(status, type) {
+  const t = normalizeType(type);
+  const stock = (t === 'reference' || t === 'knowledge');
+  const defaultish = (!status || status === 'new' || status === 'annotated');
+  if (stock && defaultish) return '参考';
+  return STATUS_LABEL[status] || (status ? status : '—');
+}
+
+// 処遇マーカー（純粋関数・2026-07-17・title 末尾右／status から自動導出＝別フィールドにしない）。
+//   '✓hollow' = 完了提案(done-proposed・中空✓)／'✓filled' = 完了(consumed・塗り✓)
+//   '→'       = 保留グループ（waiting/carried、または reference・knowledge で完了グループ status が付いていない）
+//   null      = 対応中グループ（new/annotated/review/responded）
+export function treatmentMarker(status, type) {
+  if (status === 'done-proposed') return '✓hollow';
+  if (status === 'consumed') return '✓filled';
+  if (status === 'waiting' || status === 'carried') return '→';
+  const t = normalizeType(type);
+  if (t === 'reference' || t === 'knowledge') return '→';
+  return null;
+}
+
+// 既定一覧に出すカード（純粋関数・2026-07-17）。アーカイブと完了(consumed)を除外＝Board・種類別タブの既定一覧。
+export function listableCards(cards) {
+  return (cards || []).filter((c) => !c.archived && c.status !== 'consumed');
+}
+// 完了ビュー用（2026-07-17）: 完了(consumed) ＋ アーカイブ済み。既定一覧から外れた分をここで一望する。
+export function completedCards(cards) {
+  return (cards || []).filter((c) => c.status === 'consumed' || c.archived);
 }
 
 // ---------------------------------------------------------------------------

@@ -221,8 +221,17 @@ textarea.field { min-height: 84px; resize: vertical; }
   font-size: 11px; color: var(--ink-soft);
 }
 .card-tile-body { flex: 1; min-width: 0; }
-.card-tile-title { font-weight: 600; font-size: 15px; margin-bottom: 4px; word-break: break-word; }
+.card-tile-title { font-weight: 600; font-size: 15px; margin-bottom: 4px; word-break: break-word; display: flex; align-items: baseline; gap: 6px; }
+.card-tile-title .title-text { flex: 1; min-width: 0; }
 .card-meta { display: flex; flex-wrap: wrap; gap: 4px; }
+
+/* 処遇マーカー（title 末尾右・status から自動導出・2026-07-17）。✓塗り=完了／✓中空=完了提案／→=保留グループ */
+.treat { margin-left: auto; flex: none; font-weight: 800; line-height: 1; font-size: 15px; }
+.treat.is-filled { color: #1a7f37; }                                  /* 塗り✓=完了(consumed) */
+.treat.is-hollow { color: transparent; -webkit-text-stroke: 1.2px #1a7f37; } /* 中空✓=完了提案(done-proposed) */
+.treat.is-hold { color: #8a94a6; }                                    /* →=保留グループ（waiting/carried/参考） */
+.detail-title { display: flex; align-items: baseline; gap: 8px; margin: 0; font-size: 17px; }
+.detail-title .title-text { flex: 1; min-width: 0; }
 .chip {
   font-size: 11px; color: var(--ink-soft);
   background: #eef0f4; border-radius: 6px; padding: 2px 6px;
