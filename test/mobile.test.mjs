@@ -563,14 +563,18 @@ test('⑮ status labels Japanese (display only); board is type-based 6 columns (
   assert.strictEqual(P.STATUS_LABEL['done-proposed'], '完了提案');
   assert.strictEqual(P.STATUS_LABEL.consumed, '完了');
   assert.strictEqual(P.STATUS_LABEL.carried, '申し送り');
+  assert.strictEqual(P.STATUS_LABEL.kept, '参考'); // v2.8.1: kept=参考（型と処遇の分離・凡例 C-U0000）
 
   // (b) CARD_INDEX の状態列も日本語・英語ラベルは出ない（type 非依存の素の STATUS_LABEL）
+  //     v2.8.1: kept=参考も CARD_INDEX に出る（UI statusLabel と同一語彙）。
   const idx = P.buildIndexTable([
     { id: 'C-001', title: 't', direction: 'user-to-claude', type: 'report', subject: '', tags: [], surface: '', status: 'review', created: '2026-07-15' },
     { id: 'C-002', title: 't', direction: 'user-to-claude', type: 'reference', subject: '', tags: [], surface: '', status: 'consumed', created: '2026-07-15' },
+    { id: 'C-A0004', title: 'k', direction: 'claude-to-user', type: 'report', subject: '', tags: [], surface: '', status: 'kept', created: '2026-07-15' },
   ]);
   assert.ok(idx.includes('| 対応待ち |') && idx.includes('| 完了 |'), 'CARD_INDEX の状態列は日本語（新語彙）');
-  assert.ok(!/\| (new|review|consumed) \|/.test(idx), '英語の状態ラベルは出力されない');
+  assert.ok(idx.includes('| 参考 |'), 'CARD_INDEX に kept=参考（UI と同一語彙）');
+  assert.ok(!/\| (new|review|consumed|kept) \|/.test(idx), '英語の状態ラベルは出力されない');
 
   // (c) ファイル内部の status 値は英語のまま（往復無損失＝書き換えない）
   const parsed = P.parseCard(DECISION_FIXTURE);
@@ -605,7 +609,7 @@ test('⑮b board.js は種類別カラム（boardColumns）を使い、タイル
 
 // ⑮c 表示語彙整理（3グループ）＋処遇マーカー＋完了ビュー（2026-07-17・正=カード凡例C-U0000）
 test('⑮c status vocab整理: statusLabel/treatmentMarker/listableCards/completedCards', () => {
-  // (a) statusLabel: 内部値→表示語彙。reference/knowledge は既定値(new/annotated/空)のとき「参考」。
+  // (a) statusLabel: 内部値→表示語彙＝純 status 写像（v2.8.1・型由来導出は撤去）。「参考」は status=kept のみ。
   assert.strictEqual(P.statusLabel('new', 'consult'), '新規');
   assert.strictEqual(P.statusLabel('annotated', 'consult'), '確認済み');
   assert.strictEqual(P.statusLabel('review', 'review'), '対応待ち');
@@ -614,21 +618,29 @@ test('⑮c status vocab整理: statusLabel/treatmentMarker/listableCards/complet
   assert.strictEqual(P.statusLabel('consumed', 'consult'), '完了');
   assert.strictEqual(P.statusLabel('waiting', 'consult'), '保留');
   assert.strictEqual(P.statusLabel('carried', 'consult'), '申し送り');
-  assert.strictEqual(P.statusLabel('new', 'reference'), '参考');
-  assert.strictEqual(P.statusLabel('annotated', 'knowledge'), '参考');
-  assert.strictEqual(P.statusLabel('', 'reference'), '参考');
-  // 具体的 status が付けばそちら優先（C-U0001=reference+carried→「申し送り」）
+  // kept=参考は型に依らない（C-A0004=report+kept・凡例 C-U0000）
+  assert.strictEqual(P.statusLabel('kept', 'consult'), '参考');
+  assert.strictEqual(P.statusLabel('kept', 'reference'), '参考');
+  assert.strictEqual(P.statusLabel('kept', 'report'), '参考');
+  // v2.8.1: 型由来「参考」導出は撤去＝reference/knowledge でも status がそのまま出る。
+  assert.strictEqual(P.statusLabel('new', 'reference'), '新規');
+  assert.strictEqual(P.statusLabel('annotated', 'knowledge'), '確認済み');
+  assert.strictEqual(P.statusLabel('', 'reference'), '—');
+  // 具体的 status が付けばそちら（C-U0001=reference+carried→「申し送り」）
   assert.strictEqual(P.statusLabel('carried', 'reference'), '申し送り');
   assert.strictEqual(P.statusLabel('consumed', 'reference'), '完了');
   assert.strictEqual(P.statusLabel('review', 'reference'), '対応待ち');
 
-  // (b) treatmentMarker: 完了✓／保留→／対応中=null。完了グループ status は type=reference でも✓優先。
+  // (b) treatmentMarker: 完了✓／保留→(waiting/carried/kept)／対応中=null。純 status 基準（v2.8.1・型由来→は撤去）。
   assert.strictEqual(P.treatmentMarker('done-proposed', 'report'), '✓hollow');
   assert.strictEqual(P.treatmentMarker('consumed', 'consult'), '✓filled');
   assert.strictEqual(P.treatmentMarker('waiting', 'consult'), '→');
   assert.strictEqual(P.treatmentMarker('carried', 'consult'), '→');
-  assert.strictEqual(P.treatmentMarker('new', 'reference'), '→');
-  assert.strictEqual(P.treatmentMarker('annotated', 'knowledge'), '→');
+  assert.strictEqual(P.treatmentMarker('kept', 'consult'), '→');
+  assert.strictEqual(P.treatmentMarker('kept', 'report'), '→'); // kept は型に依らず→
+  // v2.8.1: 型由来→は撤去＝reference/knowledge+対応中 status はマーカーなし。
+  assert.strictEqual(P.treatmentMarker('new', 'reference'), null);
+  assert.strictEqual(P.treatmentMarker('annotated', 'knowledge'), null);
   assert.strictEqual(P.treatmentMarker('new', 'consult'), null);
   assert.strictEqual(P.treatmentMarker('annotated', 'consult'), null);
   assert.strictEqual(P.treatmentMarker('review', 'review'), null);
@@ -646,8 +658,9 @@ test('⑮c status vocab整理: statusLabel/treatmentMarker/listableCards/complet
   assert.deepStrictEqual(P.listableCards(cards).map((c) => c.id), ['C-1', 'C-3'], '既定一覧は consumed とアーカイブを除外');
   assert.deepStrictEqual(P.completedCards(cards).map((c) => c.id), ['C-2', 'C-4'], '完了ビューは consumed ＋アーカイブ');
 
-  // (d) STATUS_ORDER に carried が登録されている
+  // (d) STATUS_ORDER に carried・kept が登録されている（v2.8.1: kept 追加）
   assert.ok(P.STATUS_ORDER.includes('carried'), 'STATUS_ORDER に carried');
+  assert.ok(P.STATUS_ORDER.includes('kept'), 'STATUS_ORDER に kept（v2.8.1）');
 
   // (e) board.js は既定一覧に listableCards を使う（consumed 除外）
   const board = readDoc('views/board.js');

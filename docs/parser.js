@@ -10,7 +10,7 @@
 // 表示ラベル（純粋データ・UI/索引で共用）
 // ---------------------------------------------------------------------------
 
-export const STATUS_ORDER = ['new', 'annotated', 'waiting', 'carried', 'review', 'responded', 'done-proposed', 'consumed'];
+export const STATUS_ORDER = ['new', 'annotated', 'waiting', 'carried', 'kept', 'review', 'responded', 'done-proposed', 'consumed'];
 
 // 状態(status)は表示のみ日本語化（v1.6・語彙は 2026-07-17 整理版＝正=カード凡例 C-U0000）。
 // ファイル内部の値は英語のまま（frontmatter は不変）。
@@ -24,6 +24,7 @@ export const STATUS_LABEL = {
   'done-proposed': '完了提案', // 完了提案（v2.1・ユーザーの完了確定待ち）
   consumed: '完了',         // 旧「消化」
   carried: '申し送り',      // CARRYOVER へ寝かせた（ROLES §1-1b・2026-07-17新設・保留グループ）
+  kept: '参考',            // AI が「残す・追加対応なし」と判定した処遇（v2.8.1・2026-07-17・保留グループ・型と処遇の分離＝凡例 C-U0000）
 };
 
 // Board の列は種類(type)別（v1.6）。この6種・この順（タブ名と同形の英語見出し）。
@@ -182,28 +183,21 @@ export function boardColumns(cards) {
   }));
 }
 
-// status の表示ラベル（純粋関数・2026-07-17）。内部値→表示語彙。
-// reference/knowledge は「残す=消化しない」ストック型: status が既定的（new/annotated/空）のときは「参考」。
-// ただし具体的な状態（carried/waiting/done-proposed/consumed/review/responded）が付いていればそちらが優先
-//（例: reference+carried → 「申し送り」）。CARD_INDEX の状態列は type 非依存の素の STATUS_LABEL を使う。
+// status の表示ラベル（純粋関数・v2.8.1・2026-07-17）。内部値→表示語彙＝純 status 写像。
+// 「参考」は status=kept（型と処遇の分離・凡例 C-U0000 準拠）。v2.8 の型由来（reference/knowledge）導出は撤去。
+// これで UI タイル/詳細も CARD_INDEX 状態列も同一写像（type 非依存）。type 引数は呼び出し互換のため残置（未使用）。
 export function statusLabel(status, type) {
-  const t = normalizeType(type);
-  const stock = (t === 'reference' || t === 'knowledge');
-  const defaultish = (!status || status === 'new' || status === 'annotated');
-  if (stock && defaultish) return '参考';
   return STATUS_LABEL[status] || (status ? status : '—');
 }
 
-// 処遇マーカー（純粋関数・2026-07-17・title 末尾右／status から自動導出＝別フィールドにしない）。
+// 処遇マーカー（純粋関数・v2.8.1・title 末尾右／status から自動導出＝別フィールドにしない）。
 //   '✓hollow' = 完了提案(done-proposed・中空✓)／'✓filled' = 完了(consumed・塗り✓)
-//   '→'       = 保留グループ（waiting/carried、または reference・knowledge で完了グループ status が付いていない）
-//   null      = 対応中グループ（new/annotated/review/responded）
+//   '→'       = 保留グループ（waiting/carried/kept・純 status 基準・v2.8 の型由来導出は撤去）
+//   null      = 対応中グループ（new/annotated/review/responded）。type 引数は呼び出し互換のため残置（未使用）。
 export function treatmentMarker(status, type) {
   if (status === 'done-proposed') return '✓hollow';
   if (status === 'consumed') return '✓filled';
-  if (status === 'waiting' || status === 'carried') return '→';
-  const t = normalizeType(type);
-  if (t === 'reference' || t === 'knowledge') return '→';
+  if (status === 'waiting' || status === 'carried' || status === 'kept') return '→';
   return null;
 }
 
