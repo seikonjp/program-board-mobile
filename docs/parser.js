@@ -1413,8 +1413,9 @@ export function caseImplMarker(caseRaw) {
   return { marker, detail };
 }
 
-// 状態語彙の導出（§2-2）。testStatus 有→そこから／無→マーカーから／どちらも無→「不明」。
-export function caseStatusVocab(marker, testStatus, markerDetail) {
+// 状態語彙の導出（§2-2・便7.1で第3源=実装状態テキストを追加）。導出源の相対順は既存据え置き（挙動互換）＝
+//   testStatus/マーカー（現行順）→ 実装状態テキスト（マーカーもtestStatusも無い時のみ）→ 不明。implStatus=implTextVocabの結果。
+export function caseStatusVocab(marker, testStatus, markerDetail, implStatus) {
   const ts = testStatus || null;
   if (ts && ts.status) {
     const s = String(ts.status).toLowerCase();
@@ -1431,7 +1432,56 @@ export function caseStatusVocab(marker, testStatus, markerDetail) {
   if (marker === '🟢') return { vocab: '実装可（未着手）', source: 'marker' };
   if (marker === '🟡') return { vocab: '追加実装が必要', source: 'marker' };
   if (marker === '🔴') return { vocab: '他機能の実装待ち' + (markerDetail ? '（' + markerDetail + '）' : ''), source: 'marker' };
+  if (implStatus && implStatus.vocab) return { vocab: implStatus.vocab, source: implStatus.source || 'impl-text' };
   return { vocab: '不明', source: 'none' };
+}
+
+// CASE内の「実装状態」テキスト宣言を抽出（便7.1・状態の第3の導出源・Mac server.js と挙動互換）。フィールド行
+//   "- **実装状態**: …" に限定（「実装依存」「実装（統合欄）」は拾わない）。value=判定用トークン・paren=最初の括弧補足・raw=原文。
+export function caseImplStatusText(caseRaw) {
+  const lines = String(caseRaw == null ? '' : caseRaw).split('\n');
+  let rest = null;
+  for (let i = 1; i < lines.length; i++) {
+    const m = /^\s*[-*]\s*\**\s*実装状態\**\s*[:：]\s*(.*)$/.exec(lines[i]);
+    if (m) { rest = m[1]; break; }
+  }
+  if (rest == null) return null;
+  rest = rest.trim();
+  if (rest === '') return null;
+  const raw = rest;
+  let value;
+  const bt = /^`([^`]*)`/.exec(rest);
+  if (bt) value = bt[1];
+  else value = rest.split(/[（(〔／]/)[0];
+  value = value.replace(/\*\*/g, '').replace(/`/g, '').trim();
+  let paren = null;
+  const pm = /（([^）]*)）|\(([^)]*)\)|〔([^〕]*)〕/.exec(rest);
+  if (pm) paren = pm[1] != null ? pm[1] : (pm[2] != null ? pm[2] : pm[3]);
+  return { value, paren, raw };
+}
+
+// 依存(前提待ち)行から依存先名を best-effort 抽出（「前提＝X」/「待ち先＝X」の最初の名）。
+export function implDepName(depsBucket) {
+  const chunks = [];
+  for (const seg of ((depsBucket && depsBucket.segments) || [])) for (const l of (seg.lines || [])) chunks.push(String(l));
+  const joined = chunks.join('\n');
+  const m = /前提[=＝]\s*[①-⑳]?\s*([^〔（(、・。\n＝=]+)/.exec(joined)
+    || /待ち先[=＝]\s*([^）)〕】》」』\]\n・]+)/.exec(joined);
+  return m ? m[1].trim() : null;
+}
+
+// 実装状態テキスト → 状態語彙（便7.1・写像4分岐＋非該当そのまま・Mac server.js と挙動互換）。dep=前提待ち有無（{name}）| null。
+export function implTextVocab(implText, dep) {
+  if (!implText || !implText.value) return null;
+  const v = String(implText.value);
+  const paren = implText.paren ? '（' + implText.paren + '）' : '';
+  if (/一部未実装/.test(v)) return { vocab: '追加実装が必要' + paren, source: 'impl-text' };
+  if (/実装済み/.test(v)) return { vocab: '実装済み' + paren, source: 'impl-text' };
+  if (/未実装/.test(v)) {
+    if (dep) return { vocab: '他機能の実装待ち' + (dep.name ? '（' + dep.name + '）' : ''), source: 'impl-text' };
+    return { vocab: '実装可（未着手）', source: 'impl-text' };
+  }
+  return { vocab: implText.raw != null ? String(implText.raw) : v, source: 'impl-text' };
 }
 
 // 表示変換（§2-1・便7・Mac server.js と挙動互換）: 原典行の記号ノイズ（行頭bullet・原典ラベル・囲み**）を除去し、
@@ -1506,7 +1556,7 @@ export function parseCaseFields(caseRaw, testStatus) {
   const caseId = idM ? idM[1] : '';
   const classification = detectCaseClassification(plain);
   const mk = caseImplMarker(text);
-  const status = caseStatusVocab(mk.marker, testStatus, mk.detail);
+  const implText = caseImplStatusText(text);           // 便7.1: 状態の第3の導出源（実装状態テキスト）
 
   let hang = null;
   for (let i = 1; i < lines.length; i++) { const m = /^(\s+)- /.exec(lines[i]); if (m) { hang = m[1].length; break; } }
@@ -1545,6 +1595,9 @@ export function parseCaseFields(caseRaw, testStatus) {
     for (const seg of buckets.impl.segments) for (const l of seg.lines) if (/前提待ち(?!でない)/.test(l)) dl.push(l);
     if (dl.length) buckets.deps = { item: 4, key: 'deps', label: null, collapse: false, segments: [{ label: null, order: 0, lines: dl }] };
   }
+  // 状態(item1)の導出（便7.1）: マーカー/testStatus（既存の相対順）→ 実装状態テキスト（第3源・依存先名は上の deps から）→ 不明。
+  const implStatus = implTextVocab(implText, buckets.deps ? { name: implDepName(buckets.deps) } : null);
+  const status = caseStatusVocab(mk.marker, testStatus, mk.detail, implStatus);
   const concerns = [];
   for (let i = 1; i < lines.length; i++) if (lines[i].indexOf('◆') >= 0) concerns.push(lines[i]);
 

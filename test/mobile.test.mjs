@@ -2574,7 +2574,7 @@ test('㋒(便7) build number in index.html matches sw.js CACHE version', () => {
   assert.ok(bm, 'index.html に build 番号');
   assert.ok(cm, 'sw.js に pbm-shell-v 版数');
   assert.strictEqual(bm[1], cm[1], 'build 表記(' + bm[1] + ') と sw CACHE 版数(' + cm[1] + ') が一致');
-  assert.strictEqual(bm[1], '36', '本便=build 36');
+  assert.strictEqual(bm[1], '37', '本便=build 37（便7.1・parser.js変更のためbump）');
 });
 
 // ㋓(便7) 実データ受入: SC-F_PL_AP_ENTP 全25ケースに生ラベル・行頭bullet・遊離**が残らない
@@ -2600,4 +2600,61 @@ test('㋓(便7) real SC-F_PL_AP_ENTP: no raw labels / lead bullets / stray ** in
   assert.strictEqual(leadBullet, 0, '行頭bulletゼロ');
   assert.strictEqual(rawLabel, 0, '原典ラベルゼロ');
   assert.strictEqual(stray, 0, '遊離**ゼロ');
+});
+
+// ============================================================================
+// 便7.1（build 37）— 状態の第3の導出源＝実装状態テキスト（Mac server.js と挙動互換）
+// ============================================================================
+
+// ㋔(便7.1) 抽出＋写像4分岐＋caseStatusVocab統合（第3源・優先順・非該当そのまま・source識別子）
+test('㋔(便7.1) impl-status text: caseImplStatusText extract + implTextVocab 4-branch + caseStatusVocab priority', () => {
+  const e1 = P.caseImplStatusText('- [ ] **CASE-01 x**\n  - **実装状態**: `実装済み`（暫定・未確認）（◆別ノート）\n');
+  assert.strictEqual(e1.value, '実装済み');
+  assert.strictEqual(e1.paren, '暫定・未確認', '値の後方に最初に現れる括弧のみ補足化');
+  const e2 = P.caseImplStatusText('- [ ] **CASE x**\n  - **実装状態**: 実装済み・**不発★**〔配線切れ〕\n');
+  assert.strictEqual(e2.value, '実装済み・不発★');
+  assert.strictEqual(e2.paren, '配線切れ');
+  assert.strictEqual(P.caseImplStatusText('- [ ] **CASE x**\n  - **実装依存**: `前提待ち`（前提=X）\n'), null, '実装依存は拾わない');
+  assert.strictEqual(P.caseImplStatusText('- [ ] **CASE x**\n  - **実装**（統合欄）:\n    - 状態: 一部未実装\n'), null, '実装統合欄は拾わない');
+
+  assert.strictEqual(P.implTextVocab({ value: '実装済み', paren: '暫定' }).vocab, '実装済み（暫定）');
+  assert.strictEqual(P.implTextVocab({ value: '一部未実装・既知バグ', paren: '機構不在' }).vocab, '追加実装が必要（機構不在）');
+  assert.strictEqual(P.implTextVocab({ value: '未実装', paren: '第2弾' }, { name: '傾斜敷地作成' }).vocab, '他機能の実装待ち（傾斜敷地作成）');
+  assert.strictEqual(P.implTextVocab({ value: '未実装', paren: '第2弾' }, null).vocab, '実装可（未着手）');
+  const raw = '◆裁定待ち〔推奨=保持〕（v2写像）';
+  assert.strictEqual(P.implTextVocab({ value: '◆裁定待ち', paren: '推奨=保持', raw }).vocab, raw, '非該当＝原典そのまま');
+  assert.strictEqual(P.implTextVocab({ value: '実装済み' }).source, 'impl-text');
+  assert.strictEqual(P.implDepName({ segments: [{ lines: ['前提待ち（前提=①傾斜敷地作成〔区分B〕・②複数玄関）'] }] }), '傾斜敷地作成');
+
+  const impl = { vocab: '実装済み（暫定）', source: 'impl-text' };
+  assert.deepStrictEqual(P.caseStatusVocab(null, null, null, impl), { vocab: '実装済み（暫定）', source: 'impl-text' });
+  assert.strictEqual(P.caseStatusVocab('🟡', null, null, impl).vocab, '追加実装が必要', 'マーカー優先');
+  assert.strictEqual(P.caseStatusVocab('🟡', { status: 'passing' }, null, impl).vocab, '実装済み', '既存相対順は不変');
+  assert.strictEqual(P.caseStatusVocab(null, null, null, null).vocab, '不明', '第3源も無ければ不明');
+});
+
+// ㋕(便7.1) 実データ: ENTP（マーカーもtest_statusも無い実物）で第3源が効き「不明」が激減（25→0）
+test('㋕(便7.1) real SC-F_PL_AP_ENTP: impl-status text collapses 不明 (before 25 → after 0)', () => {
+  const scPath = resolve(HERE, '..', '..', '..', 'Docs', 'ConOps', 'Scenarios', 'Features', 'SC-F_PL_AP_ENTP.md');
+  const body = P.parseCard(readFileSync(scPath, 'utf8')).body;
+  const cases = P.parseSheetBlocks(body, false).filter((b) => b.kind === 'case');
+  assert.strictEqual(cases.length, 25, '25ケース');
+  let before = 0, after = 0, implSrc = 0, hasDepName = false;
+  const head = {};
+  for (const c of cases) {
+    const rawC = body.slice(c.start, c.end);
+    const cf = P.parseCaseFields(rawC, null);
+    const mk = P.caseImplMarker(rawC);
+    if (P.caseStatusVocab(mk.marker, null, mk.detail).vocab === '不明') before++;   // 変更前相当（第3源なし）
+    if (cf.status.vocab === '不明') after++;
+    if (cf.status.source === 'impl-text') implSrc++;
+    if (cf.status.vocab === '他機能の実装待ち（傾斜敷地作成）') hasDepName = true;
+    const h = cf.status.vocab.replace(/（.*/, '');
+    head[h] = (head[h] || 0) + 1;
+  }
+  assert.strictEqual(before, 25, '変更前相当は全25が不明（マーカー・test_status不在）');
+  assert.strictEqual(after, 0, '第3源で不明が激減＝0件');
+  assert.strictEqual(implSrc, 25, '全25が実装状態テキスト由来');
+  assert.ok(hasDepName, '未実装×前提待ち→他機能の実装待ち（傾斜敷地作成）が実データで成立');
+  assert.ok(head['実装済み'] >= 10 && head['実装可'] >= 1 && head['追加実装が必要'] >= 1, '実装済み多数＋実装可（未着手）＋追加実装が必要');
 });
