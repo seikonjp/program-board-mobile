@@ -494,8 +494,10 @@ export function createProgram(dropbox, config) {
   // ベースルート = programRoot の親（'/ArchPlan/Program' → '/ArchPlan'）＋ソース別サブパス。
   const archplanRoot = sheetArchplanRoot(root);
   const sheetSources = config.sheetSources || [];
+  // 便3: D-2/D-4（behaviors/testreport）も開ける／💬／トグルできるよう全ソースで解決（board一覧と同じ拡張ソース）。
+  const allSheetSources = sheetSources.concat(config.sheetBoardSources || []);
 
-  function sheetSourceById(id) { return sheetSources.find((s) => s.id === id) || null; }
+  function sheetSourceById(id) { return allSheetSources.find((s) => s.id === id) || null; }
   function sheetBase(source) { return join(archplanRoot, source.sub); }
   function sheetFileAllowed(source, name) {
     const ok = source.match ? new RegExp(source.match).test(name) : true;
@@ -540,7 +542,12 @@ export function createProgram(dropbox, config) {
     if (!source) throw new Error('不明なソース: ' + sourceId);
     sheetAssertFile(source, file);
     const { text } = await dropbox.download(join(sheetBase(source), file));
-    return { source: sourceId, file, ...P.sheetPayload(text, !!source.numbered) };
+    const payload = { source: sourceId, file, ...P.sheetPayload(text, !!source.numbered) };
+    // 便3（§3）: D-2/D-3/D-4 の中核データを添付（背骨=汎用ブロックはそのまま・中核のみ差し替え）。
+    if (sourceId === 'behaviors') payload.behaviors = P.parseBehaviorDoc(text).behaviors;
+    if (sourceId === 'completion') payload.testPlan = P.parseTestPlan(text);
+    if (sourceId === 'testreport') payload.report = P.parseTestReport(text);
+    return payload;
   }
 
   // 項目直下へ💬コメント追記（updateTextFileWithRetry＝rev 楽観ロック・他部分は byte 不変）。

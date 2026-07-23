@@ -752,3 +752,51 @@ textarea.sheet-comment-input { flex: 1; min-height: 40px; resize: none; }
 .chip-approval { font-weight: 600; }
 .chip-approval.is-done { color: #fff; background: var(--ok); }
 .chip-approval-cases { color: var(--ink-soft); }
+
+/* ===== 便3（§3・build 32）D-2動作定義 / D-3テスト計画 / D-4テスト報告 / Markdown表 ===== */
+.sheet-md-table-scroll { overflow-x: auto; margin: 8px 0; -webkit-overflow-scrolling: touch; }
+.sheet-md-table { border-collapse: collapse; font-size: 12px; min-width: 100%; }
+.sheet-md-table th, .sheet-md-table td { border: 1px solid var(--line); padding: 4px 8px; text-align: left; vertical-align: top; }
+.sheet-md-table thead th { background: var(--bg); font-weight: 700; white-space: nowrap; }
+.sheet-md-table-collapse > summary { cursor: pointer; font-size: 11px; font-weight: 700; color: var(--accent); margin: 6px 0; }
+
+.behavior-panel { margin: 8px 0 14px; }
+.behavior-panel-head { font-size: 14px; margin: 6px 0; color: var(--ink); }
+.behavior-card { border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 10px; padding: 8px 10px; margin: 8px 0; background: var(--surface); }
+.behavior-card-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
+.chip-behavior-id { background: #e6ecfb; color: #2f6df6; font-weight: 700; border-radius: 4px; padding: 0 6px; font-size: 11px; }
+.behavior-name { font-weight: 700; font-size: 13px; }
+.behavior-refs { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 6px 0; }
+.behavior-refs-label { font-size: 11px; color: var(--ink-soft); font-weight: 700; }
+.chip-case-ref { background: #eef3ff; color: #2f6df6; border: 1px solid #cfd9f5; border-radius: 4px; padding: 0 6px; font-size: 11px; }
+.behavior-sec { margin: 6px 0; }
+.behavior-sec-label { font-size: 11px; font-weight: 700; color: var(--ink-soft); margin-bottom: 2px; }
+.behavior-sec-core > .behavior-sec-label { color: var(--accent); }
+.behavior-sec-body { white-space: pre-wrap; word-break: break-word; font-size: 12px; margin: 0; background: var(--bg); border-radius: 4px; padding: 4px 6px; }
+.behavior-others > summary { cursor: pointer; font-size: 11px; font-weight: 700; color: var(--ink-soft); margin: 4px 0; }
+
+.testplan-panel { border: 1px solid var(--line); border-left: 3px solid var(--later); border-radius: 10px; padding: 8px 10px; margin: 8px 0 14px; background: var(--surface); }
+.testplan-head { font-size: 14px; margin: 2px 0 8px; }
+.testplan-row { display: flex; gap: 8px; margin: 4px 0; font-size: 12px; }
+.testplan-label { font-weight: 700; color: var(--ink-soft); min-width: 9em; flex-shrink: 0; }
+.testplan-val { min-width: 0; word-break: break-word; }
+.testplan-check { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; padding: 6px 8px; border-radius: 6px; font-size: 12px; }
+.testplan-check-label { font-weight: 700; }
+.testplan-check.is-ok { background: #e8f6ee; color: #197245; border: 1px solid #b9e3cb; }
+.testplan-check.is-mismatch { background: #fdeef0; color: #b02a37; border: 1px solid #f2c4cb; font-weight: 700; }
+
+.testreport-panel { margin: 8px 0; }
+.testreport-summary { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0 12px; }
+.tr-stat { font-size: 12px; font-weight: 700; border: 1px solid var(--line); border-radius: 6px; padding: 3px 10px; background: var(--surface); }
+.tr-stat.tr-pass { color: #197245; border-color: #b9e3cb; background: #e8f6ee; }
+.tr-stat.tr-fail { color: var(--ink-soft); }
+.tr-stat.tr-fail.has-fail { color: #b02a37; background: #fdeef0; border-color: #f2c4cb; }
+.testreport-group { margin: 10px 0; }
+.testreport-group-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; padding: 4px 6px; border-left: 3px solid var(--line); }
+.testreport-group-head.has-fail { border-left-color: #d64545; }
+.tr-group-case { font-weight: 700; font-size: 12px; }
+.tr-group-tally { font-size: 11px; color: var(--ink-soft); }
+.testreport-table td, .testreport-table th { font-size: 11px; }
+.tr-row-fail { background: #fdeef0; }
+.tr-row-fail td:first-child { border-left: 3px solid #d64545; }
+.tr-row-pass { background: #f3faf5; }

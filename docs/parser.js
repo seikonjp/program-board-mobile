@@ -1573,6 +1573,255 @@ export function testStatusFor(relatedUnits, testStatusMap) {
 }
 
 // ===========================================================================
+// D-2動作定義・D-3完成定義テスト計画・D-4テスト報告 表示合成（SPEC_V3 §3・build 32 便3）
+// 背骨（タイトル/状態/依存/実装/コメント/履歴）はD-1と共通レンダラで流用し、中核項目のみ差し替え。
+// 純粋関数（Mac server.js と同名・挙動互換）。原典mdのバイトは一切変更しない。
+// ===========================================================================
+
+// テスト種類語彙（§3・凡例宣言・表示のみ）。境界難所は別フラグ。
+export const TEST_KIND_VOCAB = ['全数', '煙', '回帰', '影響', '凍結'];
+
+// --- Markdownテーブル抽出（D-3構造表・D-4リスト・定義済みテスト数の機械カウント） ---
+export function splitTableRow(line) {
+  let s = String(line == null ? '' : line).trim();
+  if (s.startsWith('|')) s = s.slice(1);
+  if (s.endsWith('|')) s = s.slice(0, -1);
+  return s.split('|').map((c) => c.trim());
+}
+export function isTableSeparator(line) {
+  const s = String(line == null ? '' : line);
+  if (s.indexOf('|') < 0) return false;
+  const cells = splitTableRow(s);
+  return cells.length > 0 && cells.every((c) => /^:?-+:?$/.test(c));
+}
+export function parseMarkdownTables(text) {
+  const lines = String(text == null ? '' : text).split('\n');
+  const tables = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (!/^\s*\|.*\|\s*$/.test(lines[i])) continue;
+    if (i + 1 < lines.length && isTableSeparator(lines[i + 1])) {
+      const header = splitTableRow(lines[i]);
+      const rows = [];
+      let j = i + 2;
+      for (; j < lines.length; j++) {
+        if (!/^\s*\|.*\|\s*$/.test(lines[j]) || isTableSeparator(lines[j])) break;
+        rows.push(splitTableRow(lines[j]));
+      }
+      tables.push({ startLine: i, endLine: j - 1, header, rows });
+      i = j - 1;
+    }
+  }
+  return tables;
+}
+
+// --- D-2 動作定義（確認型・単位=動作）。テンプレ形/実在形の2書式に対応（§3抽出写像） ---
+export const BEHAVIOR_CORE_ORDER = ['in', 'proc', 'out', 'obs', 'accept', 'cmp'];
+export const BEHAVIOR_CORE_LABEL = { in: '入力', proc: '処理', out: '出力', obs: '観察点との対応', accept: '検収形態との対応', cmp: 'CMP関与' };
+export function behaviorLabelKey(label) {
+  const L = String(label == null ? '' : label).trim();
+  if (/^入力/.test(L)) return 'in';
+  if (/処理/.test(L)) return 'proc';
+  if (/^出力/.test(L)) return 'out';
+  if (/^観察/.test(L)) return 'obs';
+  if (/^検収/.test(L)) return 'accept';
+  if (/CMP/.test(L)) return 'cmp';
+  return null;
+}
+export function parseLabeledBullets(blockLines) {
+  const fields = [];
+  let cur = null;
+  for (const line of (blockLines || [])) {
+    const m = /^(\s{0,2})-\s+(.*)$/.exec(line);
+    if (m) {
+      if (cur) fields.push(cur);
+      const sp = splitCaseLabel(m[2]);
+      cur = { label: sp.hasColon ? sp.label : null, lines: [line] };
+    } else if (cur) {
+      cur.lines.push(line);
+    }
+  }
+  if (cur) fields.push(cur);
+  return fields;
+}
+export function extractCaseRefs(headingTitle, tail) {
+  const out = [];
+  const push = (s) => { const v = String(s).trim(); if (v && !out.includes(v)) out.push(v); };
+  const scan = (str) => { const re = /CASE-[0-9A-Za-z_]+/g; let m; while ((m = re.exec(String(str || ''))) !== null) push(m[0]); };
+  const t = String(headingTitle || '');
+  const arrowIdx = t.search(/←/);
+  scan(arrowIdx >= 0 ? t.slice(arrowIdx) : t);
+  const cm = /covers\s*[:：]\s*\[([^\]]*)\]/.exec(String(tail || ''));
+  if (cm) scan(cm[1]);
+  return out;
+}
+export function parseBehaviorDoc(text) {
+  const src = String(text == null ? '' : text);
+  const lines = src.split('\n');
+  const starts = [];
+  for (let i = 0; i < lines.length; i++) {
+    const L = lines[i];
+    const h = /^###\s+(.*)$/.exec(L);
+    if (h && (/←\s*SC-F/.test(h[1]) || /CASE-\d/.test(h[1]))) { starts.push({ line: i, title: h[1].trim(), tail: '' }); continue; }
+    const b = /^\*\*([^*]+)\*\*\s*(.*)$/.exec(L);
+    if (b) {
+      const name = b[1].trim();
+      const tail = b[2] || '';
+      if (/^(BD-|OP-)/.test(name) || /covers\s*[:：]/.test(tail)) starts.push({ line: i, title: name, tail });
+    }
+  }
+  if (!starts.length) return { behaviors: [] };
+  const behaviors = [];
+  for (let k = 0; k < starts.length; k++) {
+    const s = starts[k];
+    const endLine = k + 1 < starts.length ? starts[k + 1].line : lines.length;
+    const blockLines = [];
+    for (let j = s.line + 1; j < endLine; j++) {
+      if (/^#{1,6}\s/.test(lines[j])) break;
+      if (/^\*\*(BD-|OP-)/.test(lines[j])) break;
+      blockLines.push(lines[j]);
+    }
+    const caseRefs = extractCaseRefs(s.title, s.tail).map((c) => ({ case: c }));
+    const idM = /^(BD-[A-Z0-9_-]+|OP-[A-Z0-9_-]+)/.exec(s.title);
+    const id = idM ? idM[1] : (caseRefs[0] ? caseRefs[0].case : (s.title.split(/\s+/)[0] || ''));
+    let name = s.title;
+    if (idM) name = s.title.slice(idM[1].length).trim();
+    else if (name.search(/←/) >= 0) name = name.slice(0, name.search(/←/)).trim();
+    const fields = parseLabeledBullets(blockLines);
+    const core = {};
+    const others = [];
+    for (const f of fields) {
+      const key = f.label ? behaviorLabelKey(f.label) : null;
+      const text0 = f.lines.join('\n').replace(/^\s{0,2}-\s+/, '').replace(/\s+$/, '');
+      if (key) { if (!core[key]) core[key] = text0; }
+      else if (f.label) others.push({ label: f.label, text: text0 });
+    }
+    const sections = [];
+    for (const key of BEHAVIOR_CORE_ORDER) if (core[key] != null) sections.push({ key, core: true, label: BEHAVIOR_CORE_LABEL[key], text: core[key] });
+    for (const o of others) sections.push({ key: 'other', core: false, label: o.label, text: o.text });
+    behaviors.push({ id, name, caseRefs, sections });
+  }
+  return { behaviors };
+}
+
+// --- D-3 テスト計画: 構造抽出＋計画数⇄定義済みテスト数の機械一致 ---
+export function parseTestPlan(text) {
+  const src = String(text == null ? '' : text);
+  const lines = src.split('\n');
+  let startIdx = -1;
+  for (let i = 0; i < lines.length; i++) { if (/テスト計画/.test(lines[i])) { startIdx = i; break; } }
+  if (startIdx < 0) return { present: false };
+  const block = [];
+  const startHeadM = /^(#{1,6})\s/.exec(lines[startIdx]);
+  for (let j = startIdx + 1; j < lines.length && block.length < 60; j++) {
+    const hm = /^(#{1,6})\s/.exec(lines[j]);
+    if (hm) { if (!startHeadM || hm[1].length <= startHeadM[1].length) break; }
+    block.push(lines[j]);
+  }
+  const blockText = block.join('\n');
+  const fields = parseLabeledBullets(block);
+  const byLabel = (re) => {
+    for (const f of fields) if (f.label && re.test(f.label)) {
+      const joined = f.lines.join(' ');
+      const ci = joined.search(/[:：]/);
+      return (ci >= 0 ? joined.slice(ci + 1) : joined.replace(/^\s*-\s+/, '')).trim();
+    }
+    return null;
+  };
+  const totalLine = byLabel(/^全数/);
+  const doLine = byLabel(/^実施/);
+  let planCount = null, planExpr = null;
+  if (totalLine) {
+    planExpr = totalLine;
+    const nums = []; const re = /[＝=]\s*([0-9]+)/g; let m;
+    while ((m = re.exec(totalLine)) !== null) nums.push(parseInt(m[1], 10));
+    if (nums.length) planCount = nums[nums.length - 1];
+  }
+  const mode = doLine ? (/全数/.test(doLine) ? '全数' : (/抽出/.test(doLine) ? '抽出' : null)) : null;
+  let declaredDefined = null;
+  if (byLabel(/設定照合/)) { const dm = /定義済み[^0-9]*([0-9]+)|([0-9]+)\s*(?:件|本|個)/.exec(byLabel(/設定照合/)); if (dm) declaredDefined = parseInt(dm[1] || dm[2], 10); }
+  const countedDefined = countDefinedTests(src);
+  const definedCount = declaredDefined != null ? declaredDefined : countedDefined;
+  const definedSource = declaredDefined != null ? 'declared' : (countedDefined != null ? 'counted' : null);
+  let consistency = null;
+  if (planCount != null && definedCount != null) consistency = { ok: planCount === definedCount, plan: planCount, defined: definedCount, diff: definedCount - planCount };
+  return {
+    present: true, planExpr, planCount, mode,
+    reason: mode === '抽出' ? byLabel(/^理由/) : null,
+    method: mode === '抽出' ? byLabel(/^方法/) : null,
+    discovery: mode === '抽出' ? byLabel(/失敗発見力/) : null,
+    axisRef: byLabel(/要素の照合/), sampleRef: byLabel(/^標本/),
+    definedCount, definedSource, consistency, blockText,
+  };
+}
+export function countDefinedTests(text) {
+  const tables = parseMarkdownTables(text);
+  let total = 0, found = false;
+  for (const t of tables) {
+    const h0 = String((t.header || [])[0] || '');
+    const isTestTable = /TESTID/i.test(h0) || /テスト\s*ID/.test(h0) || /テストケース/.test(h0);
+    if (!isTestTable) continue;
+    found = true;
+    for (const r of t.rows) {
+      const c0 = String((r || [])[0] || '');
+      if (c0 === '') continue;
+      if (/`/.test(c0) || /[A-Z]{2,}[#\-]|CASE-|D-\d/.test(c0)) total++;
+    }
+  }
+  return found ? total : null;
+}
+
+// --- D-4 テスト報告（確認型・リスト形式）。実在0本＝fixture固定の器。 ---
+export const REPORT_COLS = [
+  { key: 'scenario', re: /シナリオ/ }, { key: 'completion', re: /完成定義/ },
+  { key: 'testcase', re: /テストケース/ }, { key: 'testId', re: /テスト\s*ID|TESTID/i },
+  { key: 'artifact', re: /提出物/ }, { key: 'kind', re: /種類/ },
+  { key: 'result', re: /結果/ }, { key: 'verdict', re: /照合/ },
+];
+export function reportResultKind(result) {
+  const s = String(result == null ? '' : result);
+  if (/失敗|不合格|fail|red|赤|×|✗|✕|NG/i.test(s)) return 'fail';
+  if (/成功|合格|pass|green|緑|○|◯|✓|OK/i.test(s)) return 'pass';
+  return 'other';
+}
+export function reportExecuted(result) {
+  const s = String(result == null ? '' : result).trim();
+  return s !== '' && !/^(—|-|未実行|未|—+|n\/a|na)$/i.test(s);
+}
+export function parseTestReport(text) {
+  const tables = parseMarkdownTables(text);
+  let target = null, colMap = null;
+  for (const t of tables) {
+    const map = {};
+    (t.header || []).forEach((h, idx) => { for (const c of REPORT_COLS) if (map[c.key] == null && c.re.test(String(h))) map[c.key] = idx; });
+    const primary = ['scenario', 'completion', 'testcase', 'testId', 'artifact'].filter((k) => map[k] != null).length;
+    if (primary >= 3) { target = t; colMap = map; break; }
+  }
+  if (!target) return { present: false, rows: [], groups: [], summary: { planned: 0, executed: 0, passed: 0, failed: 0 } };
+  const cell = (r, key) => (colMap[key] != null ? String((r || [])[colMap[key]] || '').trim() : '');
+  const rows = target.rows.map((r) => {
+    const result = cell(r, 'result');
+    const scenario = cell(r, 'scenario'); const testcase = cell(r, 'testcase'); const testId = cell(r, 'testId');
+    const caseM = /CASE-[0-9A-Za-z_]+/.exec(scenario + ' ' + testcase + ' ' + testId);
+    return {
+      scenario, completion: cell(r, 'completion'), testcase, testId,
+      artifact: cell(r, 'artifact'), kind: cell(r, 'kind'), result, verdict: cell(r, 'verdict'),
+      resultKind: reportResultKind(result), executed: reportExecuted(result),
+      caseId: caseM ? caseM[0] : (scenario || testcase || '（未分類）'),
+    };
+  });
+  const gmap = new Map();
+  for (const row of rows) { const k = row.caseId; if (!gmap.has(k)) gmap.set(k, []); gmap.get(k).push(row); }
+  const tally = (list) => ({
+    planned: list.length,
+    executed: list.filter((x) => x.executed).length,
+    passed: list.filter((x) => x.resultKind === 'pass').length,
+    failed: list.filter((x) => x.resultKind === 'fail').length,
+  });
+  const groups = [...gmap.entries()].map(([caseId, list]) => Object.assign({ caseId, rows: list }, tally(list)));
+  return { present: true, columns: Object.keys(colMap), rows, groups, summary: tally(rows) };
+}
+
+// ===========================================================================
 // 状態表現基盤（SPEC_V3 §1-1・§1-2・v2.10 / build 30）— 純粋関数（Mac server.js と同名・挙動互換）
 // ===========================================================================
 

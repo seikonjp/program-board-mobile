@@ -67,7 +67,8 @@ export const config = {
   // sheetSources（既存3）は不変更。board 用の拡張ソース。
   sheetBoardSources: [
     { id: 'behaviors', label: '動作定義', sub: 'Docs/ConOps/Behaviors', recurse: true, numbered: false, match: '\\.md$', exclude: '^_' },
-    { id: 'testreport', label: 'テスト報告', sub: 'Docs/ConOps/TestReports', recurse: true, numbered: false, match: '\\.md$', exclude: '^_' },
+    // 便3（§3）: D-4 config `testReports`（既定=archplan-core/Docs/TestReports・実在0本＝空許容・◆置き場未確定＝フォルダは作らない）。
+    { id: 'testreport', label: 'テスト報告', sub: 'archplan-core/Docs/TestReports', recurse: true, numbered: false, match: '\\.md$', exclude: '^_' },
   ],
 
   // 3画面タグ（§1-2a）。設計基盤は便4でB-1〜B-6枠を作成＝便1はタグのみ・準備中表示。

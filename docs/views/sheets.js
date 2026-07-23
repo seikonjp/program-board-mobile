@@ -7,7 +7,7 @@
 
 import { registerView } from '../registry.js';
 import { h, openCardDetail } from './shared.js';
-import { deriveDocState, DOC_STATE_ICON, buildInbox, cardNeedsUserAction, typeLabel, statusLabel } from '../parser.js';
+import { deriveDocState, DOC_STATE_ICON, buildInbox, cardNeedsUserAction, typeLabel, statusLabel, parseMarkdownTables } from '../parser.js';
 
 const SHEET_STATE_LABEL = { draft: '起草中', reviewed: '批評済', approved: '承認済' };
 
@@ -94,6 +94,8 @@ function legendDetails() {
   ul.appendChild(h('div', '', '解除→N＝承認すると動ける作業単位数（概算）'));
   ul.appendChild(h('div', '', '状態語彙7値: 実装済み／実装可（未着手）／追加実装が必要／他機能の実装待ち（〇〇）／実装中／テスト一部成功・停止中（n/m）／デバッグ中／不明'));
   ul.appendChild(h('div', '', '実装可否マーカー: 🟢実装可 🟡同時実装 🔴他機能の実装待ち（見出し直下） ／ グループ承認＝グループ内全ケース[x]で自動成立'));
+  ul.appendChild(h('div', '', '開発フロー: D-1シナリオ（承認）／D-2動作定義（確認・単位=動作・由来=CASE参照）／D-3完成定義（承認・テスト計画=計画数⇄定義済みの機械照合）／D-4テスト報告（確認）'));
+  ul.appendChild(h('div', '', 'テスト種類語彙（表示のみ）: 全数／煙／回帰／影響／凍結 ＋境界難所フラグ ／ テスト報告の失敗＝🔎発見（恥でなく成果）'));
   d.appendChild(ul);
   return d;
 }
@@ -292,6 +294,12 @@ function renderSheet(ctx, payload) {
   bodyEl.innerHTML = '';
   if (payload.preamble) renderTextRegion(ctx, payload, payload.preamble, payload.preambleStartLine || 0, 'sheet-preamble')
     .forEach((n) => bodyEl.appendChild(n));
+  // D-4 テスト報告（§3）: リスト形式（原典全文ブロックは表示しない＝リストが本体）。
+  if (payload.report) { bodyEl.appendChild(renderTestReport(payload)); return; }
+  // D-2 動作定義（§3）: 動作単位の中核パネル（背骨=全文ブロックはこの下に続く）。
+  if (payload.behaviors && payload.behaviors.length) bodyEl.appendChild(renderBehaviorPanel(payload));
+  // D-3 完成定義（§3）: テスト計画の機械一致（あれば）。構造表は generic ブロックの表整形で表示。
+  if (payload.testPlan && payload.testPlan.present) bodyEl.appendChild(renderTestPlanPanel(payload.testPlan));
   const groupByHeading = {};
   ((payload.approval && payload.approval.groups) || []).forEach((g) => { if (g.headingIndex != null && g.headingIndex >= 0) groupByHeading[g.headingIndex] = g; });
   (payload.blocks || []).forEach((b) => bodyEl.appendChild(renderBlock(ctx, payload, b, groupByHeading[b.index] || null)));
@@ -319,6 +327,137 @@ function renderCaseSection(sec) {
   secEl.appendChild(h('div', 'case-sec-label', num + ' ' + sec.label));
   secEl.appendChild(h('pre', 'case-sec-body', sectionText(sec)));
   return secEl;
+}
+
+// ---- Markdownテーブル整形表示（§3・D-3構造表／D-4／汎用）— parser と同名ロジック ----
+const LARGE_TABLE_ROWS = 8;
+function renderMarkdownTable(t) {
+  const large = (t.rows || []).length > LARGE_TABLE_ROWS;
+  const tbl = h('table', 'sheet-md-table');
+  const thead = h('thead'); const htr = h('tr');
+  (t.header || []).forEach((c) => { const th = h('th'); renderInlineMd(c).forEach((n) => th.appendChild(n)); htr.appendChild(th); });
+  thead.appendChild(htr); tbl.appendChild(thead);
+  const tbody = h('tbody');
+  (t.rows || []).forEach((r) => {
+    const tr = h('tr');
+    for (let i = 0; i < (t.header || []).length; i++) { const td = h('td'); renderInlineMd(r[i] != null ? r[i] : '').forEach((n) => td.appendChild(n)); tr.appendChild(td); }
+    tbody.appendChild(tr);
+  });
+  tbl.appendChild(tbody);
+  const scroll = h('div', 'sheet-md-table-scroll'); scroll.appendChild(tbl);
+  if (!large) return scroll;
+  const d = h('details', 'sheet-md-table-collapse');
+  d.appendChild(h('summary', 'sheet-md-table-sum', '表（' + t.rows.length + '行）を展開'));
+  d.appendChild(scroll);
+  return d;
+}
+function renderTextWithTables(text, preClass) {
+  const nodes = [];
+  const lines = String(text == null ? '' : text).split('\n');
+  const tables = parseMarkdownTables(text);
+  let cursor = 0;
+  const flushPre = (from, to) => {
+    const seg = lines.slice(from, to).join('\n').replace(/^\n+/, '').replace(/\n+$/, '');
+    if (seg !== '') nodes.push(h('pre', preClass || 'sheet-block-text', seg));
+  };
+  for (const t of tables) { if (t.startLine > cursor) flushPre(cursor, t.startLine); nodes.push(renderMarkdownTable(t)); cursor = t.endLine + 1; }
+  if (cursor < lines.length) flushPre(cursor, lines.length);
+  if (!nodes.length) { const seg = String(text == null ? '' : text).replace(/^\n+/, '').replace(/\n+$/, ''); if (seg !== '') nodes.push(h('pre', preClass || 'sheet-block-text', seg)); }
+  return nodes;
+}
+
+// D-2 動作定義（§3・確認型）: 動作単位の中核パネル。
+function renderBehaviorPanel(payload) {
+  const wrap = h('div', 'behavior-panel');
+  wrap.appendChild(h('h3', 'behavior-panel-head', '動作定義（中核・確認＝読了）'));
+  (payload.behaviors || []).forEach((bh) => {
+    const card = h('div', 'behavior-card');
+    const head = h('div', 'behavior-card-head');
+    if (bh.id) head.appendChild(h('span', 'chip chip-behavior-id', bh.id));
+    if (bh.name) head.appendChild(h('span', 'behavior-name', bh.name));
+    card.appendChild(head);
+    if (bh.caseRefs && bh.caseRefs.length) {
+      const refs = h('div', 'behavior-refs');
+      refs.appendChild(h('span', 'behavior-refs-label', '由来'));
+      bh.caseRefs.forEach((r) => refs.appendChild(h('span', 'chip chip-case-ref', '→ ' + r.case)));
+      card.appendChild(refs);
+    }
+    const addSec = (parent, s) => {
+      const sec = h('div', 'behavior-sec' + (s.core ? ' behavior-sec-core' : ''));
+      sec.appendChild(h('div', 'behavior-sec-label', s.label));
+      renderTextWithTables(s.text, 'behavior-sec-body').forEach((n) => sec.appendChild(n));
+      parent.appendChild(sec);
+    };
+    (bh.sections || []).filter((s) => s.core).forEach((s) => addSec(card, s));
+    const others = (bh.sections || []).filter((s) => !s.core);
+    if (others.length) {
+      const d = h('details', 'behavior-others');
+      d.appendChild(h('summary', 'behavior-others-sum', 'その他（' + others.length + '項目）'));
+      others.forEach((s) => addSec(d, s));
+      card.appendChild(d);
+    }
+    wrap.appendChild(card);
+  });
+  return wrap;
+}
+
+// D-3 テスト計画（§3・承認型）: 構造表示＋計画数⇄定義済みテスト数の機械一致。
+function renderTestPlanPanel(tp) {
+  const wrap = h('div', 'testplan-panel');
+  wrap.appendChild(h('h3', 'testplan-head', 'テスト計画'));
+  const row = (label, val) => { if (val == null || val === '') return; const r = h('div', 'testplan-row'); r.appendChild(h('span', 'testplan-label', label)); const v = h('span', 'testplan-val'); renderInlineMd(String(val)).forEach((n) => v.appendChild(n)); r.appendChild(v); wrap.appendChild(r); };
+  row('全数', tp.planExpr != null ? (tp.planExpr + (tp.planCount != null ? '　→計画数 ' + tp.planCount : '')) : null);
+  row('実施', tp.mode);
+  if (tp.mode === '抽出') { row('理由', tp.reason); row('方法', tp.method); row('失敗発見力', tp.discovery); }
+  row('要素の照合（⇄シナリオ軸）', tp.axisRef);
+  row('標本', tp.sampleRef);
+  if (tp.consistency) {
+    const ok = tp.consistency.ok;
+    const bar = h('div', 'testplan-check ' + (ok ? 'is-ok' : 'is-mismatch'));
+    bar.appendChild(h('span', 'testplan-check-label', '設定照合'));
+    const diff = tp.consistency.diff;
+    const verdict = ok ? '一致 ✓' : ('不一致 ' + (diff < 0 ? '不足' + (-diff) : '超過' + diff));
+    bar.appendChild(h('span', 'testplan-check-val', '計画 ' + tp.consistency.plan + ' ⇄ 定義済み ' + tp.consistency.defined + (tp.definedSource === 'counted' ? '（自動カウント）' : '') + ' — ' + verdict));
+    wrap.appendChild(bar);
+  }
+  return wrap;
+}
+
+// D-4 テスト報告（§3・確認型・リスト形式）: 5+3列・集計バー・失敗=発見・CASEグループまとめ。
+function renderTestReport(payload) {
+  const rep = payload.report || {};
+  const wrap = h('div', 'testreport-panel');
+  const s = rep.summary || { planned: 0, executed: 0, passed: 0, failed: 0 };
+  const bar = h('div', 'testreport-summary');
+  bar.appendChild(h('span', 'tr-stat', '計画 ' + s.planned));
+  bar.appendChild(h('span', 'tr-stat', '実行 ' + s.executed));
+  bar.appendChild(h('span', 'tr-stat tr-pass', '成功 ' + s.passed));
+  bar.appendChild(h('span', 'tr-stat tr-fail' + (s.failed > 0 ? ' has-fail' : ''), (s.failed > 0 ? '🔎 発見（失敗） ' : '失敗 ') + s.failed));
+  wrap.appendChild(bar);
+  if (!rep.present) { wrap.appendChild(h('p', 'view-hint', 'テスト報告はまだありません（原典未整備＝空許容・§3）。')); return wrap; }
+  const COLS = [['scenario', '対応シナリオ'], ['completion', '対応完成定義'], ['testcase', 'テストケース'], ['testId', 'テストID'], ['artifact', '提出物'], ['kind', '種類'], ['result', '結果'], ['verdict', '照合']];
+  (rep.groups || []).forEach((g) => {
+    const gwrap = h('div', 'testreport-group');
+    const gh = h('div', 'testreport-group-head' + (g.failed > 0 ? ' has-fail' : ''));
+    gh.appendChild(h('span', 'tr-group-case', g.caseId));
+    gh.appendChild(h('span', 'tr-group-tally', '計画' + g.planned + '・実行' + g.executed + '・成功' + g.passed + (g.failed > 0 ? '・🔎失敗' + g.failed : '・失敗0')));
+    gwrap.appendChild(gh);
+    const scroll = h('div', 'sheet-md-table-scroll');
+    const tbl = h('table', 'sheet-md-table testreport-table');
+    const thead = h('thead'); const htr = h('tr');
+    COLS.forEach(([, label]) => htr.appendChild(h('th', null, label)));
+    thead.appendChild(htr); tbl.appendChild(thead);
+    const tbody = h('tbody');
+    (g.rows || []).forEach((r) => {
+      const tr = h('tr', r.resultKind === 'fail' ? 'tr-row-fail' : (r.resultKind === 'pass' ? 'tr-row-pass' : ''));
+      COLS.forEach(([key]) => { const td = h('td'); renderInlineMd(String(r[key] != null ? r[key] : '')).forEach((n) => td.appendChild(n)); tr.appendChild(td); });
+      tbody.appendChild(tr);
+    });
+    tbl.appendChild(tbody); scroll.appendChild(tbl);
+    gwrap.appendChild(scroll);
+    wrap.appendChild(gwrap);
+  });
+  return wrap;
 }
 
 // CASEブロックの合成表示（§2-1・記載順0〜10・対象/根拠のみ折りたたみ）。
@@ -448,7 +587,7 @@ function renderTextRegion(ctx, payload, text, startLine, preClass) {
   let buf = [];
   const flush = () => {
     const t = buf.join('\n').replace(/^\n+/, '').replace(/\n+$/, '');
-    if (t !== '') nodes.push(h('pre', preClass || 'sheet-block-text', t));
+    if (t !== '') renderTextWithTables(t, preClass || 'sheet-block-text').forEach((n) => nodes.push(n));
     buf = [];
   };
   for (let j = 0; j < lines.length; j++) {
@@ -482,7 +621,7 @@ function renderBlock(ctx, payload, block, group) {
     if (/^\s*- \[[ xX]\]/m.test(rest)) {
       renderTextRegion(ctx, payload, rest, restStartLine(block), 'sheet-block-text').forEach((n) => container.appendChild(n));
     } else {
-      container.appendChild(h('pre', 'sheet-block-text', rest));
+      renderTextWithTables(rest, 'sheet-block-text').forEach((n) => container.appendChild(n));
     }
   }
   container.appendChild(commentRow(ctx, payload, block));

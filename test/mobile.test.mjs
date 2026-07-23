@@ -2131,3 +2131,101 @@ test('㊼ 磨き b: buildNewCardMarkdown status default report/review→review, 
   // 往復無損失（byte）維持
   assert.strictEqual(P.serializeCard(P.parseCard(rep)), rep);
 });
+
+// ===========================================================================
+// 便3（build 32・§3）: D-2動作定義 / D-3テスト計画 / D-4テスト報告 / Markdown表
+// ===========================================================================
+
+test('㉚(便3) parseMarkdownTables: header+separator+rows', () => {
+  const md = 'まえがき\n\n| A | B | C |\n|---|:--:|---|\n| 1 | 2 | 3 |\n| x | y | z |\n\nあとがき';
+  const t = P.parseMarkdownTables(md);
+  assert.strictEqual(t.length, 1);
+  assert.deepStrictEqual(t[0].header, ['A', 'B', 'C']);
+  assert.deepStrictEqual(t[0].rows, [['1', '2', '3'], ['x', 'y', 'z']]);
+  assert.strictEqual(P.isTableSeparator('|---|:--:|---|'), true);
+  assert.strictEqual(P.isTableSeparator('| A | B |'), false);
+  assert.deepStrictEqual(P.splitTableRow('| a | b |'), ['a', 'b']);
+  assert.strictEqual(P.parseMarkdownTables('| just | pipes |\n| no | sep |').length, 0);
+});
+
+test('㉛(便3) parseBehaviorDoc: template heading form + bold BD form + fallback', () => {
+  const tmpl = '# BD\n\n## §2\n\n### 玄関を据える ← SC-F CASE-01\n- 入力: 建築エリア\n- 処理: 選抜\n- 出力: アンカー\n- 観察点との対応: 位置\n- 検収形態との対応: 画像\n- CMP関与: PLC\n\n### 次の動作 ← SC-F CASE-02\n- 入力: x\n';
+  const t = P.parseBehaviorDoc(tmpl);
+  assert.strictEqual(t.behaviors.length, 2);
+  assert.deepStrictEqual(t.behaviors[0].caseRefs.map((r) => r.case), ['CASE-01']);
+  assert.deepStrictEqual(t.behaviors[0].sections.filter((s) => s.core).map((s) => s.key), ['in', 'proc', 'out', 'obs', 'accept', 'cmp']);
+
+  const bold = '## §2\n\n**BD-ENTP-01 接道候補生成** — `covers: [CASE-01, CASE-03]`\n- 目的: 機械化\n- 入力: エリア\n- 出力: 候補\n';
+  const b = P.parseBehaviorDoc(bold);
+  assert.strictEqual(b.behaviors.length, 1);
+  assert.strictEqual(b.behaviors[0].id, 'BD-ENTP-01');
+  assert.strictEqual(b.behaviors[0].name, '接道候補生成');
+  assert.deepStrictEqual(b.behaviors[0].caseRefs.map((r) => r.case), ['CASE-01', 'CASE-03']);
+  assert.ok(b.behaviors[0].sections.filter((s) => !s.core).map((s) => s.label).includes('目的'));
+
+  assert.deepStrictEqual(P.parseBehaviorDoc('# ただの文書\n本文だけ').behaviors, []);
+});
+
+test('㉜(便3) parseTestPlan: consistency ok / mismatch=red / absent=hidden', () => {
+  const ok = [
+    '## テスト計画',
+    '- 全数: 接道方向4×候補点3＝12 ＋ 角地2×2＝4 ＝16',
+    '- 実施: 全数',
+    '- 要素の照合: シナリオ軸6と対応',
+    '- 標本: FX-FRT-001',
+    '',
+    '## §4-1 テストケース設計図',
+    '| TESTID | 内容 |',
+    '|---|---|',
+  ].concat(Array.from({ length: 16 }, (_, i) => '| `T-' + (i + 1) + '` | c |')).join('\n');
+  const p = P.parseTestPlan(ok);
+  assert.strictEqual(p.present, true);
+  assert.strictEqual(p.planCount, 16);
+  assert.strictEqual(p.mode, '全数');
+  assert.strictEqual(p.definedCount, 16);
+  assert.deepStrictEqual(p.consistency, { ok: true, plan: 16, defined: 16, diff: 0 });
+
+  const short = ok.replace(/\| `T-16` \| c \|\n?/, '');
+  const ps = P.parseTestPlan(short);
+  assert.strictEqual(ps.consistency.ok, false);
+  assert.strictEqual(ps.consistency.diff, -1);
+
+  assert.strictEqual(P.parseTestPlan('# 完成定義\n本文').present, false);
+
+  const ext = '### テスト計画\n- 全数: 100×1＝100\n- 実施: 抽出\n- 理由: 全数は非現実的\n- 方法: 境界標本\n- 失敗発見力: 破綻ライン内外で保存\n';
+  const pe = P.parseTestPlan(ext);
+  assert.strictEqual(pe.mode, '抽出');
+  assert.ok(/非現実的/.test(pe.reason) && /境界標本/.test(pe.method) && /保存/.test(pe.discovery));
+});
+
+test('㉝(便3) countDefinedTests', () => {
+  assert.strictEqual(P.countDefinedTests('| TESTID | x |\n|---|---|\n| `A#1` | a |\n| `B-2` | b |'), 2);
+  assert.strictEqual(P.countDefinedTests('| 名前 | x |\n|---|---|\n| a | b |'), null);
+});
+
+test('㉞(便3) parseTestReport: columns, summary, groups, failure', () => {
+  const md = [
+    '# テスト報告',
+    '| 対応シナリオ | 対応完成定義 | テストケース | テストID | 提出物 | 種類 | 結果 | 照合 |',
+    '|---|---|---|---|---|---|---|---|',
+    '| CASE-01 | D-01 | 標準配置 | `T-1` | 画像 | 全数 | 成功 | 一致 |',
+    '| CASE-01 | D-03 | 決定性 | `T-2` | 数値 | 回帰 | 失敗 | 不一致 |',
+    '| CASE-09 | D-12 | 巡回 | `T-3` | 画像 | 全数 | 未実行 | — |',
+  ].join('\n');
+  const r = P.parseTestReport(md);
+  assert.strictEqual(r.present, true);
+  assert.deepStrictEqual(r.summary, { planned: 3, executed: 2, passed: 1, failed: 1 });
+  assert.strictEqual(r.rows[1].resultKind, 'fail');
+  assert.strictEqual(r.rows[2].executed, false);
+  assert.strictEqual(r.groups.length, 2);
+  const g1 = r.groups.find((g) => g.caseId === 'CASE-01');
+  assert.deepStrictEqual([g1.planned, g1.passed, g1.failed], [2, 1, 1]);
+  assert.strictEqual(P.parseTestReport('# 空\n本文').present, false);
+});
+
+test('㉟(便3) config: testreport 既定=archplan-core/Docs/TestReports・sheetBoardSources に behaviors/testreport', () => {
+  const ids = (APP_CONFIG.sheetBoardSources || []).map((s) => s.id);
+  assert.ok(ids.includes('behaviors') && ids.includes('testreport'));
+  const tr = (APP_CONFIG.sheetBoardSources || []).find((s) => s.id === 'testreport');
+  assert.strictEqual(tr.sub, 'archplan-core/Docs/TestReports', 'D-4 config = archplan-core/Docs/TestReports');
+});
