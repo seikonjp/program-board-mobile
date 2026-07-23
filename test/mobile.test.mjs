@@ -2516,3 +2516,88 @@ test('（便6）config ラベルに記号接頭辞なし（id維持）', () => {
   assert.strictEqual(APP_CONFIG.viewStateSub, 'Program/data/view_state.json', 'view_state 置き場');
   assert.strictEqual(APP_CONFIG.summariesSub, 'Program/data/summaries.json', 'summaries 置き場統一');
 });
+
+// ============================================================================
+// 便7（build 36）— ケース表示の「変換」＋sw版数一致
+// ============================================================================
+
+// renderInlineMd と同じ消費規則の plain 化（**bold**→bold, `code`→code）。テスト検証用。
+function inlineMdPlainM(s) {
+  return String(s == null ? '' : s).replace(/\*\*([^*]+)\*\*/g, '$1').replace(/`([^`]+)`/g, '$1');
+}
+
+// ㋐(便7) 変換純関数: ラベル除去・内容構成・ノイズ除去（Mac server.js と挙動互換）
+test('㋐(便7) composeCaseSectionDisplay: label-strip + content composition + noise removal', () => {
+  const body = P.parseCard(SCEN_A_M).body;
+  const blocks = P.parseSheetBlocks(body, false);
+  const c1 = blocks.find((b) => b.kind === 'case' && b.id === 'CASE-01');
+  const cf = P.parseCaseFields(body.slice(c1.start, c1.end), null);
+  const content = cf.sections.find((s) => s.key === 'content');
+  assert.strictEqual(content.display[0].kind, 'para', '起きること=段落');
+  assert.strictEqual(content.display[0].text, '部屋割りから壁が立ち上がる', '文章のまま');
+  assert.strictEqual(content.display[1].kind, 'bullet');
+  assert.strictEqual(content.display[1].text, '平屋・部屋のみ', '前提の本文（ラベル除去）');
+  const texts = content.display.map((u) => u.text);
+  assert.ok(texts.includes('2D-3D位置一致'), '観察の下位が箇条書きへ');
+  const RAW = /^(検収形態|起きること|前提|操作\/契機|観察可能な結果)\s*[:：]/;
+  content.display.forEach((u) => {
+    assert.ok(!/^\s*-\s/.test(u.text), '行頭bulletなし');
+    assert.ok(!RAW.test(u.text), '原典ラベルなし');
+  });
+  const comp = cf.sections.find((s) => s.key === 'completion');
+  assert.strictEqual(comp.display[0].text, '画像=2D3D並置', '検収形態の本文（囲み**とラベル除去）');
+});
+
+// ㋑(便7) deps: 「前提待ちでない」を除外・真の前提待ちは抽出／concernsDisplayの重複除去
+test('㋑(便7) deps excludes 前提待ちでない + concernsDisplay dedupe', () => {
+  const raw = [
+    '- [ ] **CASE-99 依存誤検出（正常系）**',
+    '  - 起きること: こう動く',
+    '  - **実装依存**: `既存依存`（同一機能内の実装対象＝前提待ちでない）',
+  ].join('\n');
+  assert.ok(!P.parseCaseFields(raw, null).sections.find((s) => s.key === 'deps'), '前提待ちでない→依存なし');
+  assert.ok(P.parseCaseFields(raw.replace('前提待ちでない', '前提待ち（他機能=SP_SP）'), null).sections.find((s) => s.key === 'deps'), '前提待ち（…）→依存あり');
+  // concernsDisplay 重複除去（CASE-03 の◆行は内容に既出）。
+  const body = P.parseCard(SCEN_A_M).body;
+  const c3 = P.parseSheetBlocks(body, false).find((b) => b.kind === 'case' && b.id === 'CASE-03');
+  const cf3 = P.parseCaseFields(body.slice(c3.start, c3.end), null);
+  assert.strictEqual(cf3.concerns.length, 1, '生の◆収集=1（互換）');
+  assert.strictEqual(cf3.concernsDisplay.length, 0, '内容既出のため重複除去');
+});
+
+// ㋒(便7) sw版数一致: index.html の build 表記と sw.js の CACHE 版数が一致（build 34据え置き事故の再発防止）
+test('㋒(便7) build number in index.html matches sw.js CACHE version', () => {
+  const idx = readDoc('index.html');
+  const sw = readDoc('sw.js');
+  const bm = /build\s+(\d+)/.exec(idx);
+  const cm = /pbm-shell-v(\d+)/.exec(sw);
+  assert.ok(bm, 'index.html に build 番号');
+  assert.ok(cm, 'sw.js に pbm-shell-v 版数');
+  assert.strictEqual(bm[1], cm[1], 'build 表記(' + bm[1] + ') と sw CACHE 版数(' + cm[1] + ') が一致');
+  assert.strictEqual(bm[1], '36', '本便=build 36');
+});
+
+// ㋓(便7) 実データ受入: SC-F_PL_AP_ENTP 全25ケースに生ラベル・行頭bullet・遊離**が残らない
+test('㋓(便7) real SC-F_PL_AP_ENTP: no raw labels / lead bullets / stray ** in 25 cases', () => {
+  const scPath = resolve(HERE, '..', '..', '..', 'Docs', 'ConOps', 'Scenarios', 'Features', 'SC-F_PL_AP_ENTP.md');
+  const body = P.parseCard(readFileSync(scPath, 'utf8')).body;
+  const cases = P.parseSheetBlocks(body, false).filter((b) => b.kind === 'case');
+  assert.strictEqual(cases.length, 25, '25ケース');
+  const RAW = /^(検収形態|起きること|前提|操作\/契機|観察可能な結果|実装状態|実装依存|関連品質基準|失敗探索の考察|対象|根拠|現況ギャップ)\s*[:：]/;
+  let leadBullet = 0, rawLabel = 0, stray = 0;
+  for (const c of cases) {
+    const cf = P.parseCaseFields(body.slice(c.start, c.end), null);
+    const units = [];
+    cf.sections.forEach((s) => (s.display || []).forEach((u) => units.push(u.text)));
+    (cf.concernsDisplay || []).forEach((t) => units.push(t));
+    assert.ok(units.length > 0, cf.caseId + ' に表示ユニット');
+    for (const t of units) {
+      if (/^\s*-\s/.test(t)) leadBullet++;
+      if (RAW.test(t)) rawLabel++;
+      if (inlineMdPlainM(t).includes('**')) stray++;
+    }
+  }
+  assert.strictEqual(leadBullet, 0, '行頭bulletゼロ');
+  assert.strictEqual(rawLabel, 0, '原典ラベルゼロ');
+  assert.strictEqual(stray, 0, '遊離**ゼロ');
+});

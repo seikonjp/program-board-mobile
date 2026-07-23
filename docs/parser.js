@@ -1434,6 +1434,65 @@ export function caseStatusVocab(marker, testStatus, markerDetail) {
   return { vocab: '不明', source: 'none' };
 }
 
+// 表示変換（§2-1・便7・Mac server.js と挙動互換）: 原典行の記号ノイズ（行頭bullet・原典ラベル・囲み**）を除去し、
+// 内容構成（説明文→条件→観察）で並べ替えた表示ユニット列 [{kind:'para'|'bullet', text, level}] を返す。
+// 文言は生成しない（除去と並べ替えのみ）。本文中の **太字**・`code` は残す。
+export function caseLeadKind(sectionKey, label) {
+  if (sectionKey === 'content') return (label && /起きること/.test(label)) ? 'para' : 'bullet';
+  if (sectionKey === 'completion' || sectionKey === 'quality' || sectionKey === 'failure' || sectionKey === 'gap') return 'para';
+  return 'bullet';
+}
+
+export function caseSegmentUnits(seg, sectionKey) {
+  const lines = (seg && seg.lines) || [];
+  if (!lines.length) return [];
+  const units = [];
+  const first = String(lines[0]);
+  const firstIndent = (/^(\s*)/.exec(first))[1].length;
+  const afterBullet = first.replace(/^\s*[-*]\s+/, '');
+  const sp = splitCaseLabel(afterBullet);
+  const leadKind = caseLeadKind(sectionKey, (seg && seg.label) || sp.label);
+  const leadText = sp.inline.trim();
+  if (leadText) units.push({ kind: leadKind, text: leadText, level: 0 });
+  for (let i = 1; i < lines.length; i++) {
+    const ln = String(lines[i]);
+    if (ln.trim() === '') continue;
+    const bm = /^(\s*)[-*]\s+(.*)$/.exec(ln);
+    if (bm) {
+      const lvl = Math.max(1, Math.round((bm[1].length - firstIndent) / 2));
+      units.push({ kind: 'bullet', text: bm[2].trim(), level: lvl });
+    } else if (units.length) {
+      units[units.length - 1].text += ' ' + ln.trim();
+    } else {
+      units.push({ kind: leadKind, text: ln.trim(), level: 0 });
+    }
+  }
+  return units;
+}
+
+export function composeCaseSectionDisplay(section) {
+  const out = [];
+  for (const seg of ((section && section.segments) || [])) {
+    for (const u of caseSegmentUnits(seg, section.key)) out.push(u);
+  }
+  return out;
+}
+
+export function composeConcernsDisplay(concerns, sections) {
+  const shown = new Set();
+  for (const sec of (sections || [])) {
+    if (sec.collapse) continue;
+    for (const seg of (sec.segments || [])) for (const l of (seg.lines || [])) shown.add(String(l).trim());
+  }
+  const out = [];
+  for (const c of (concerns || [])) {
+    const t = String(c).trim();
+    if (shown.has(t)) continue;
+    out.push(t.replace(/^[-*]\s+/, ''));
+  }
+  return out;
+}
+
 // CASEブロックの合成表示データ（§2-1・記載順0〜10）。原典行を verbatim 保持（バイト非改変）。
 export function parseCaseFields(caseRaw, testStatus) {
   const text = String(caseRaw == null ? '' : caseRaw);
@@ -1483,7 +1542,7 @@ export function parseCaseFields(caseRaw, testStatus) {
   if (buckets.content) buckets.content.segments.sort((a, b) => (a.order || 0) - (b.order || 0));
   if (buckets.impl) {
     const dl = [];
-    for (const seg of buckets.impl.segments) for (const l of seg.lines) if (/前提待ち/.test(l)) dl.push(l);
+    for (const seg of buckets.impl.segments) for (const l of seg.lines) if (/前提待ち(?!でない)/.test(l)) dl.push(l);
     if (dl.length) buckets.deps = { item: 4, key: 'deps', label: null, collapse: false, segments: [{ label: null, order: 0, lines: dl }] };
   }
   const concerns = [];
@@ -1497,8 +1556,10 @@ export function parseCaseFields(caseRaw, testStatus) {
   const sections = Object.keys(buckets)
     .map((k) => ({ item: buckets[k].item, key: k, label: ITEM_LABEL[k] || buckets[k].label || k, collapse: buckets[k].collapse, segments: buckets[k].segments }))
     .sort((a, b) => a.item - b.item);
+  for (const sec of sections) sec.display = composeCaseSectionDisplay(sec);   // 便7: 掃除済み表示ユニット
+  const concernsDisplay = composeConcernsDisplay(concerns, sections);
 
-  return { caseId, checked, headingText, headingPlain: plain, classification, marker: mk.marker, markerDetail: mk.detail, status, sections, concerns };
+  return { caseId, checked, headingText, headingPlain: plain, classification, marker: mk.marker, markerDetail: mk.detail, status, sections, concerns, concernsDisplay };
 }
 
 // CASEグループ（§2-3）＝原典の分類見出し（### 区切り）単位。blocks は parseSheetBlocks の出力（checked 付き）。

@@ -422,11 +422,36 @@ function sectionText(sec) {
   (sec.segments || []).forEach((seg) => { (seg.lines || []).forEach((l) => lines.push(l)); });
   return dedentLines(lines);
 }
+// section の表示ユニット列（server 合成の display を優先・旧payloadは sectionText へフォールバック）。
+function caseSectionUnits(sec) {
+  if (sec.display && sec.display.length) return sec.display;
+  const t = sectionText(sec);
+  return t ? [{ kind: 'para', text: t, level: 0 }] : [];
+}
+// 表示ユニット列 → 本文DOM（<pre>ベタ流し廃止・原典ラベル/囲み**除去済み・本文の**/`はインライン整形）。
+function caseSectionBody(units) {
+  const body = h('div', 'case-sec-body');
+  (units || []).forEach((u) => body.appendChild(renderCaseUnit(u)));
+  return body;
+}
+function renderCaseUnit(u) {
+  if (u.kind === 'bullet') {
+    const row = h('div', 'case-unit case-unit-bullet' + (u.level > 1 ? ' lvl-' + Math.min(u.level, 4) : ''));
+    row.appendChild(h('span', 'case-bullet-mark', '・'));
+    const t = h('span', 'case-unit-text');
+    renderInlineMd(u.text).forEach((n) => t.appendChild(n));
+    row.appendChild(t);
+    return row;
+  }
+  const p = h('div', 'case-unit case-unit-para');
+  renderInlineMd(u.text).forEach((n) => p.appendChild(n));
+  return p;
+}
 function renderCaseSection(sec) {
   const secEl = h('div', 'case-sec case-sec-' + sec.key);
   const num = String(sec.item).replace(/\..*$/, '');
   secEl.appendChild(h('div', 'case-sec-label', num + ' ' + sec.label));
-  secEl.appendChild(h('pre', 'case-sec-body', sectionText(sec)));
+  secEl.appendChild(caseSectionBody(caseSectionUnits(sec)));
   return secEl;
 }
 
@@ -580,16 +605,17 @@ function renderComposedCase(ctx, payload, block) {
   const flat = (cf.sections || []).filter((s) => !s.collapse);
   const collapsibles = (cf.sections || []).filter((s) => s.collapse);
   flat.forEach((sec) => container.appendChild(renderCaseSection(sec)));
-  if (cf.concerns && cf.concerns.length) {
+  const concernsDisp = cf.concernsDisplay || (cf.concerns || []).map((c) => String(c).replace(/^\s*[-*]\s+/, '').trim());
+  if (concernsDisp.length) {
     const secEl = h('div', 'case-sec case-sec-concern');
     secEl.appendChild(h('div', 'case-sec-label', '8 気になる点（◆）'));
-    secEl.appendChild(h('pre', 'case-sec-body', dedentLines(cf.concerns)));
+    secEl.appendChild(caseSectionBody(concernsDisp.map((t) => ({ kind: 'bullet', text: t, level: 1 }))));
     container.appendChild(secEl);
   }
   collapsibles.forEach((sec) => {
     const d = h('details', 'case-collapse');
     d.appendChild(h('summary', 'case-sec-label', sec.label + '（参照・折りたたみ）'));
-    d.appendChild(h('pre', 'case-sec-body', sectionText(sec)));
+    d.appendChild(caseSectionBody(caseSectionUnits(sec)));
     container.appendChild(d);
   });
   container.appendChild(commentRow(ctx, payload, block));
