@@ -433,10 +433,10 @@ test('⑪ 混在桁 ID は数値順に採番・ソートされる', () => {
 // ---------------------------------------------------------------------------
 // ⑫ タブ順（v1.4）＋ Report タブ抽出（type=report・cardsForType 再利用）
 // ---------------------------------------------------------------------------
-test('⑫ 最上位ナビ5群（便5で進捗を独立タブ追加）＋Cards群の第2階層タブ順', () => {
-  // 最上位ナビ = Cards / Sheets / 進捗 / Views / Sessions（この順）
-  assert.deepStrictEqual(enabledGroups().map((g) => g.id), ['cards', 'sheets', 'progress', 'views', 'sessions'], '群の順');
-  assert.deepStrictEqual(enabledGroups().map((g) => g.label), ['Cards', 'Sheets', '進捗', 'Views', 'Sessions'], '群のラベル');
+test('⑫ 最上位ナビ6群（便9でProjectsを末尾に追加）＋Cards群の第2階層タブ順', () => {
+  // 最上位ナビ = Cards / Sheets / 進捗 / Views / Sessions / Projects（この順）
+  assert.deepStrictEqual(enabledGroups().map((g) => g.id), ['cards', 'sheets', 'progress', 'views', 'sessions', 'projects'], '群の順');
+  assert.deepStrictEqual(enabledGroups().map((g) => g.label), ['Cards', 'Sheets', '進捗', 'Views', 'Sessions', 'Projects'], '群のラベル');
   // Cards 群の第2階層タブ順（v1.8 の8タブを内包）
   assert.deepStrictEqual(
     enabledViewIdsForGroup('cards'),
@@ -448,11 +448,13 @@ test('⑫ 最上位ナビ5群（便5で進捗を独立タブ追加）＋Cards群
   assert.deepStrictEqual(enabledViewIdsForGroup('progress'), ['progressboard'], '進捗群の単一ビュー（便5）');
   assert.deepStrictEqual(enabledViewIdsForGroup('views'), ['views']);
   assert.deepStrictEqual(enabledViewIdsForGroup('sessions'), ['sessions']);
+  assert.deepStrictEqual(enabledViewIdsForGroup('projects'), ['projects'], 'Projects群の単一ビュー（便9）');
   assert.strictEqual(viewGroup('board'), 'cards');
   assert.strictEqual(viewGroup('sheets'), 'sheets');
   assert.strictEqual(viewGroup('progressboard'), 'progress');
+  assert.strictEqual(viewGroup('projects'), 'projects');
   // enabledViewIds は全群のビューを config 順で返す（動的 import 用）
-  assert.deepStrictEqual(enabledViewIds(), ['board', 'reference', 'knowledge', 'consult', 'decision', 'report', 'tray', 'memo', 'completed', 'sheets', 'progressboard', 'views', 'sessions']);
+  assert.deepStrictEqual(enabledViewIds(), ['board', 'reference', 'knowledge', 'consult', 'decision', 'report', 'tray', 'memo', 'completed', 'sheets', 'progressboard', 'views', 'sessions', 'projects']);
 });
 
 test('⑫b cardsForType(type=report) は report カードのみ抽出（Report タブ）', () => {
@@ -2574,7 +2576,7 @@ test('㋒(便7) build number in index.html matches sw.js CACHE version', () => {
   assert.ok(bm, 'index.html に build 番号');
   assert.ok(cm, 'sw.js に pbm-shell-v 版数');
   assert.strictEqual(bm[1], cm[1], 'build 表記(' + bm[1] + ') と sw CACHE 版数(' + cm[1] + ') が一致');
-  assert.strictEqual(bm[1], '39', '本便=build 39（便8追補・renderTextWithTablesのインライン整形化）');
+  assert.strictEqual(bm[1], '40', '本便=build 40（便9・Projectsタブ）');
 });
 
 // ㋓(便7) 実データ受入: SC-F_PL_AP_ENTP 全25ケースに生ラベル・行頭bullet・遊離**が残らない
@@ -2732,4 +2734,99 @@ test('便8-D(build38) sheetPayload transformState: fresh/stale/absent + frontmat
   // 旧様式signal: frontmatterなし＝legacyFormat の駆動源（program.js が behaviors/completion に対して付与）
   assert.strictEqual(P.parseSheetMeta(SCEN8).hasFrontmatter, false, 'frontmatterなし→legacyFormat=true の駆動源');
   assert.strictEqual(P.parseSheetMeta('---\nstate: draft\n---\n# x\n').hasFrontmatter, true, 'frontmatterあり→新様式扱い');
+});
+
+// ---------------------------------------------------------------------------
+// 便9（build 40・SPEC_V3 §5e・HANDOFF_K2便2）: Projects タブ parseProjectsCensus
+//   Mac server.js の parseProjectsCensus と同名・挙動互換（同一 fixture・同一期待値）。
+// ---------------------------------------------------------------------------
+const CENSUS_B_FIXTURE = [
+  '# CENSUS_B_PJ系',
+  '',
+  '## §1 プロジェクト／テーマ一覧表',
+  '',
+  '### §1a Projects（3件）— Board「Projectsタブ」初期データ兼用',
+  '',
+  '| PJ名 | 状態 | 残実装計画の有無 | Workの状況 |',
+  '|---|---|---|---|',
+  '| AP01_建築条件解析 | 暫定完成宣言済み(2026-07-12) | 有(限定的) | WK01〜05全て済 |',
+  '| FrameworkImprovement | 完了(要件レーン再開待ちで休止中) | 有(残置作業多数) | T1〜T8個別に残置作業明記 |',
+  '| ED03_駐車場編集 | 観察完了・実装待機(上流未完成) | 有(実装未着手) | W1のみ済、W2以降待機 |',
+  '',
+  '### §1b Review（2テーマ）',
+  '',
+  '| テーマ名 | 状態 | 残実装計画の有無 | Workの状況 |',
+  '|---|---|---|---|',
+  '| AutonomousDevSystem | 停止中(方針決定後、実装着手前で足踏み) | 有 | Phase0進行止まり |',
+  '| Reconsolidation | ほぼ完成(走査⑥最終検収合格) | 無に近い | 全15項目完了 |',
+  '',
+  '---',
+  '',
+  '## §2 残作業の候補リスト',
+  '',
+  '形式: `名称｜種別仮｜出典PJ｜形式の有無｜フラグ｜既登記/新発見｜一言`',
+  '',
+  '### AP01_建築条件解析',
+  '- NARROW（狭小判定FPU）=partial・将来スタブ｜fpu｜AP01｜形式なし｜NO｜既登記｜将来実装予定のまま保留',
+  '- STRUCTURE.md作成後回し｜doc/infra｜AP01｜記録のみ｜YES｜新発見｜②の段まで保留',
+  '',
+  '### Review/AutonomousDevSystem',
+  '- Phase1検証ハーネス構築｜framework/infra/test｜AutonomousDevSystem｜形式なし｜YES｜既登記｜文書内「最大gap」',
+  '',
+  '### Reconsolidation',
+  '- 本ファイルに残作業記載なし。実体は別PJ側（本census対象外）。',
+  '',
+  '## §3 機能以外の実装計画で扱いに迷うもの',
+  '',
+  '1. RegenerationScope 全体 — これは§2ではないので無視される。',
+  '',
+].join('\n');
+
+test('便9 parseProjectsCensus: §1a/§1b tables + state/plan buckets + §2 residuals (build 40)', () => {
+  const r = P.parseProjectsCensus(CENSUS_B_FIXTURE);
+  assert.strictEqual(r.counts.projects, 3, '§1a=3PJ');
+  assert.strictEqual(r.counts.reviews, 2, '§1b=2テーマ');
+  assert.strictEqual(r.malformed.length, 0, '崩れ行なし');
+  assert.strictEqual(r.counts.residualItems, 4, '§2残作業=4件（§3は計上しない）');
+  const byName = {}; r.items.forEach((it) => (byName[it.name] = it));
+  assert.strictEqual(byName['AP01_建築条件解析'].stateBucket, 'provisional');
+  assert.strictEqual(byName['AP01_建築条件解析'].stateRaw, '暫定完成宣言済み(2026-07-12)', '原文を保持');
+  assert.strictEqual(byName['FrameworkImprovement'].stateBucket, 'done', '完了（括弧内の休止に引きずられない）');
+  assert.strictEqual(byName['ED03_駐車場編集'].stateBucket, 'waiting', '観察完了・実装待機→待機');
+  assert.strictEqual(byName['AutonomousDevSystem'].stateBucket, 'stopped');
+  assert.strictEqual(byName['Reconsolidation'].stateBucket, 'provisional', 'ほぼ完成');
+  assert.strictEqual(byName['AP01_建築条件解析'].section, 'project');
+  assert.strictEqual(byName['AutonomousDevSystem'].section, 'review');
+  assert.strictEqual(byName['AP01_建築条件解析'].planBucket, 'yes');
+  assert.strictEqual(byName['AP01_建築条件解析'].planNote, '限定的');
+  assert.strictEqual(byName['Reconsolidation'].planBucket, 'near-none');
+  assert.strictEqual(byName['AP01_建築条件解析'].residuals.length, 2);
+  assert.strictEqual(byName['AP01_建築条件解析'].residuals[0].typeTag, 'fpu');
+  assert.strictEqual(byName['AP01_建築条件解析'].residuals[1].crossFlag, 'YES');
+  assert.strictEqual(byName['AutonomousDevSystem'].residuals.length, 1, 'Review/前置きを剥がして§1bへ結合');
+  assert.strictEqual(byName['Reconsolidation'].residuals[0].prose, true, '散文残作業');
+});
+
+test('便9 parseProjectsCensus: empty/null is graceful; unit bucket rules (build 40)', () => {
+  assert.deepStrictEqual(P.parseProjectsCensus('').items, []);
+  assert.strictEqual(P.parseProjectsCensus(null).items.length, 0);
+  assert.strictEqual(P.projectStateBucket('進行中(文書更新停止2026-06-13・要確認)'), 'inprogress', '括弧内の停止を無視');
+  assert.strictEqual(P.projectStateBucket('起動のみ(検討作業未着手)'), 'dormant');
+  assert.strictEqual(P.projectStateBucket('確定済み(...)'), 'waiting');
+  assert.strictEqual(P.projectStateBucket('謎の状態'), 'other', '未該当は other（偽装しない）');
+  assert.strictEqual(P.projectPlanBucket('有'), 'yes');
+  assert.strictEqual(P.projectPlanBucket('無に近い'), 'near-none');
+  assert.strictEqual(P.projectPlanBucket('無(AP03側で確認)'), 'no');
+  assert.strictEqual(P.projectPlanNote('有(限定的)'), '限定的');
+});
+
+test('便9 real data: CENSUS_B parses to 45 projects + 5 reviews, no breakage (build 40)', () => {
+  let text;
+  try { text = readFileSync(resolve(HERE, '..', '..', '..', 'Program', 'Sessions', 'S-0007_開発手法設計', 'drafts', 'census', 'CENSUS_B_PJ系.md'), 'utf8'); }
+  catch { return; } // 実データ非依存（未存在ならskip扱い）
+  const r = P.parseProjectsCensus(text);
+  assert.strictEqual(r.counts.projects, 45, '§1a=45PJ');
+  assert.strictEqual(r.counts.reviews, 5, '§1b=Review5');
+  assert.strictEqual(r.malformed.length, 0, 'parse崩れなし');
+  assert.ok(r.counts.residualItems > 200, '§2残作業が多数結合（実測279）');
 });

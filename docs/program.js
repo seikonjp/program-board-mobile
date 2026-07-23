@@ -654,6 +654,15 @@ export function createProgram(dropbox, config) {
     return P.buildProgressPayload({ censusText, comText, axisText, ledgerText, lanesText, testText, coText });
   }
 
+  // Projects タブ（便9・build 40・§5e・HANDOFF_K2便2）: CENSUS_B を読み取り→機械抽出（読み取り専用）。
+  // 未存在でも壊れない（available:false）。パスは config.projectsSource（統合台帳K2a後に差し替え前提）。
+  async function loadProjects() {
+    const src = (config.projectsSource && config.projectsSource.sub) || null;
+    const text = src ? await readViewText(src) : null;
+    const parsed = P.parseProjectsCensus(text || '');
+    return { available: text != null, source: src, ...parsed };
+  }
+
   // 進捗タブ（便5・build 34）: IMPL_REGISTRY → 参照 SC-F のみ読む（需要駆動）＋完成定義照合。読み取り専用。
   const progressBoardCfg = config.progressBoard || {};
   async function loadProgressBoard() {
@@ -977,6 +986,7 @@ export function createProgram(dropbox, config) {
     toggleSheetCheckbox,
     loadProgress,
     loadProgressBoard,
+    loadProjects,
     listLibrary,
     readLibraryItem,
     // 便4（§4）: RDSナビ・Library原典

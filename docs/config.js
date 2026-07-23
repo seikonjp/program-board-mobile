@@ -46,15 +46,18 @@ export const config = {
     // Views / Sessions は Phase 3/4 で実装予定＝準備中の空状態のみ（タブは出す）。
     { id: 'views', enabled: true, group: 'views' },
     { id: 'sessions', enabled: true, group: 'sessions' },
+    // Projects タブ（便9・build 40・§5e・HANDOFF_K2便2）: CENSUS_B の 45PJ＋Review5＋残作業を一望。
+    { id: 'projects', enabled: true, group: 'projects' },
   ],
 
-  // 最上位ナビ（5群・便5で進捗を独立タブ追加）。表示順＝この順。
+  // 最上位ナビ（6群・便9でProjectsを末尾に追加）。表示順＝この順。
   groups: [
     { id: 'cards', label: 'Cards' },
     { id: 'sheets', label: 'Sheets' },
     { id: 'progress', label: '進捗' },
     { id: 'views', label: 'Views' },
     { id: 'sessions', label: 'Sessions' },
+    { id: 'projects', label: 'Projects' },
   ],
 
   // Sheets ソース定義（パスはここに集約＝config化・読み取り専用＋💬コメント＋承認）。
@@ -171,6 +174,11 @@ export const config = {
   // Sessions（起動チケット・v2.4・Phase4）。programRoot 直下 'Sessions'（S-*/briefing.md）。
   // モバイルは表示のみ（▶起動は非活性=「Macで起動」）。
   sessionsSub: 'Sessions',
+
+  // Projects タブ（便9・build 40・§5e・HANDOFF_K2便2）。初期データ = CENSUS_B_PJ系.md。
+  // sheetArchplanRoot（/ArchPlan）相対。統合台帳 K2a 適用後にパスを差し替える前提（config化）。
+  // 未存在でも壊れない（loadProjects が available:false を返す）。
+  projectsSource: { sub: 'Program/Sessions/S-0007_開発手法設計/drafts/census/CENSUS_B_PJ系.md' },
 
   // Views ライブラリ8軸（DOC_GOVERNANCE_LIST View9の進捗以外・v2.3）。
   // sub:null（品質基準枠）・未存在正本は「未整備」表示で無事故。開いた時のみ取得。

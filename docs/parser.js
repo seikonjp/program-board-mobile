@@ -1737,6 +1737,119 @@ export function parseMarkdownTables(text) {
   return tables;
 }
 
+// ---------------------------------------------------------------------------
+// Projects タブ（便9・build 40・SPEC_V3 §5e・HANDOFF_K2便2＝K2b）
+//   CENSUS_B_PJ系.md（§1a 45PJ ＋ §1b Review5 ＋ §2 残作業）→ 構造化。
+//   Mac server.js の parseProjectsCensus と同名・挙動互換（純関数）。
+//   状態バケットは「括弧前の見出し語」で判定（括弧内補足に引きずられない）・原文併記＝偽装しない。
+// ---------------------------------------------------------------------------
+export const PROJECT_STATE_BUCKET_META = [
+  { id: 'provisional', label: '暫定完成', re: /暫定完成|ほぼ完成/ },
+  { id: 'stopped', label: '停止・休止', re: /停止|休止/ },
+  { id: 'dormant', label: '起動のみ・移行', re: /起動のみ|移行済み|移転済み|実質空/ },
+  { id: 'inprogress', label: '進行中', re: /進行中/ },
+  { id: 'waiting', label: '待機・確定', re: /待機|観察完了|確定/ },
+  { id: 'done', label: '完成・完了', re: /完成|完結|完了/ },
+];
+export function projectStateBucket(stateRaw) {
+  const head = String(stateRaw == null ? '' : stateRaw).split(/[（(]/)[0];
+  for (const b of PROJECT_STATE_BUCKET_META) if (b.re.test(head)) return b.id;
+  return 'other';
+}
+export function projectPlanBucket(planRaw) {
+  const s = String(planRaw == null ? '' : planRaw).trim();
+  if (/^無に近い/.test(s)) return 'near-none';
+  if (/^有/.test(s)) return 'yes';
+  if (/^無/.test(s)) return 'no';
+  return 'unknown';
+}
+export function projectPlanNote(planRaw) {
+  const m = /[（(]([^）)]*)[）)]/.exec(String(planRaw == null ? '' : planRaw));
+  return m ? m[1].trim() : '';
+}
+export function parseProjectsCensus(text) {
+  const lines = String(text == null ? '' : text).split('\n');
+  const items = [];
+  const byName = Object.create(null);
+  const malformed = [];
+  let mode = null; // 'p1' | 'p1a' | 'p1b' | 's2' | null
+  let s2key = null;
+
+  const addItem = (section, cells) => {
+    const name = String(cells[0] || '').trim();
+    if (name === '') { malformed.push({ section, reason: 'empty-name', raw: cells.join(' | ') }); return; }
+    const stateRaw = String(cells[1] || '').trim();
+    const planRaw = String(cells[2] || '').trim();
+    const workRaw = String(cells[3] || '').trim();
+    const it = {
+      section, name,
+      stateRaw, stateBucket: projectStateBucket(stateRaw),
+      planRaw, planBucket: projectPlanBucket(planRaw), planNote: projectPlanNote(planRaw),
+      workRaw, residuals: [],
+    };
+    items.push(it);
+    byName[name] = it;
+  };
+
+  for (const line of lines) {
+    const h2 = /^##\s+(.*)$/.exec(line);
+    if (h2) {
+      const t = h2[1];
+      if (/§\s*2/.test(t)) { mode = 's2'; s2key = null; }
+      else if (/§\s*1/.test(t)) { mode = 'p1'; }
+      else { mode = null; }
+      continue;
+    }
+    const h3 = /^###\s+(.*)$/.exec(line);
+    if (h3) {
+      const t = h3[1].trim();
+      if (mode === 's2') { s2key = t.replace(/^Review\//, '').trim(); }
+      else if (/§\s*1a/.test(t)) { mode = 'p1a'; }
+      else if (/§\s*1b/.test(t)) { mode = 'p1b'; }
+      continue;
+    }
+
+    if (mode === 'p1a' || mode === 'p1b') {
+      if (!/^\s*\|.*\|\s*$/.test(line)) continue;
+      if (isTableSeparator(line)) continue;
+      const cells = splitTableRow(line);
+      const first = String(cells[0] || '').trim();
+      if (first === 'PJ名' || first === 'テーマ名') continue;
+      if (cells.length < 2) { malformed.push({ section: mode === 'p1a' ? 'project' : 'review', reason: 'few-cells', raw: line }); continue; }
+      addItem(mode === 'p1a' ? 'project' : 'review', cells);
+      continue;
+    }
+
+    if (mode === 's2' && s2key) {
+      const bm = /^\s*-\s+(.*)$/.exec(line);
+      if (!bm) continue;
+      const content = bm[1].trim();
+      if (content === '') continue;
+      const it = byName[s2key];
+      if (!it) continue;
+      const parts = content.split('｜').map((p) => p.trim());
+      if (parts.length >= 2) {
+        it.residuals.push({
+          name: parts[0] || '', typeTag: parts[1] || '', sourcePj: parts[2] || '',
+          hasForm: parts[3] || '', crossFlag: parts[4] || '', registration: parts[5] || '',
+          note: parts[6] || '', prose: false,
+        });
+      } else {
+        it.residuals.push({ name: content, prose: true });
+      }
+      continue;
+    }
+  }
+
+  const counts = { projects: 0, reviews: 0, residualItems: 0, byBucket: {} };
+  items.forEach((it) => {
+    if (it.section === 'project') counts.projects++; else counts.reviews++;
+    counts.residualItems += it.residuals.length;
+    counts.byBucket[it.stateBucket] = (counts.byBucket[it.stateBucket] || 0) + 1;
+  });
+  return { items, counts, malformed };
+}
+
 // --- D-2 動作定義（確認型・単位=動作）。テンプレ形/実在形の2書式に対応（§3抽出写像） ---
 export const BEHAVIOR_CORE_ORDER = ['in', 'proc', 'out', 'obs', 'accept', 'cmp'];
 export const BEHAVIOR_CORE_LABEL = { in: '入力', proc: '処理', out: '出力', obs: '観察点との対応', accept: '検収形態との対応', cmp: 'CMP関与' };
