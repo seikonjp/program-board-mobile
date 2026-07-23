@@ -535,13 +535,14 @@ function renderTextWithTables(text, preClass) {
   const lines = String(text == null ? '' : text).split('\n');
   const tables = parseMarkdownTables(text);
   let cursor = 0;
+  const mdPre = (seg) => { const p = h('pre', preClass || 'sheet-block-text'); renderInlineMd(seg).forEach((n) => p.appendChild(n)); return p; }; // md記号ゼロ原則（§5d-5）: 生テキストを流さずインライン整形
   const flushPre = (from, to) => {
     const seg = lines.slice(from, to).join('\n').replace(/^\n+/, '').replace(/\n+$/, '');
-    if (seg !== '') nodes.push(h('pre', preClass || 'sheet-block-text', seg));
+    if (seg !== '') nodes.push(mdPre(seg));
   };
   for (const t of tables) { if (t.startLine > cursor) flushPre(cursor, t.startLine); nodes.push(renderMarkdownTable(t)); cursor = t.endLine + 1; }
   if (cursor < lines.length) flushPre(cursor, lines.length);
-  if (!nodes.length) { const seg = String(text == null ? '' : text).replace(/^\n+/, '').replace(/\n+$/, ''); if (seg !== '') nodes.push(h('pre', preClass || 'sheet-block-text', seg)); }
+  if (!nodes.length) { const seg = String(text == null ? '' : text).replace(/^\n+/, '').replace(/\n+$/, ''); if (seg !== '') nodes.push(mdPre(seg)); }
   return nodes;
 }
 

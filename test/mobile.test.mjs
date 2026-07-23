@@ -2574,7 +2574,7 @@ test('㋒(便7) build number in index.html matches sw.js CACHE version', () => {
   assert.ok(bm, 'index.html に build 番号');
   assert.ok(cm, 'sw.js に pbm-shell-v 版数');
   assert.strictEqual(bm[1], cm[1], 'build 表記(' + bm[1] + ') と sw CACHE 版数(' + cm[1] + ') が一致');
-  assert.strictEqual(bm[1], '38', '本便=build 38（便8・parser.js/program.js変更のためbump）');
+  assert.strictEqual(bm[1], '39', '本便=build 39（便8追補・renderTextWithTablesのインライン整形化）');
 });
 
 // ㋓(便7) 実データ受入: SC-F_PL_AP_ENTP 全25ケースに生ラベル・行頭bullet・遊離**が残らない
