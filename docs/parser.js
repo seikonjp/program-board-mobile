@@ -1296,3 +1296,149 @@ export function libraryMdBlocks(text) {
     .filter((b) => b.kind === 'heading')
     .map((b) => ({ index: b.index, level: b.level, id: b.id, heading: b.heading }));
 }
+
+// ===========================================================================
+// 状態表現基盤（SPEC_V3 §1-1・§1-2・v2.10 / build 30）— 純粋関数（Mac server.js と同名・挙動互換）
+// ===========================================================================
+
+// 状態アイコン（凡例宣言語彙・§1-1a）。凡例に無い記号は画面に出さない。
+export const DOC_STATE_ICON = { new: '🆕', reviewing: '◐', done: '✓', reapprove: '↺' };
+
+// 決定的hash（FNV-1a 32bit hex）。Mac(Node)/モバイル(browser) で同一結果（charCodeAt=UTF-16単位・Math.imul）。
+export function hashText(text) {
+  let h = 0x811c9dc5;
+  const s = String(text == null ? '' : text);
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+  return (h >>> 0).toString(16).padStart(8, '0');
+}
+
+// 文書状態導出（§1-1a）。開封・読了の記録はクライアント localStorage（正本へ書かない）。
+export function deriveDocState(entry, record, opts) {
+  const e = entry || {};
+  const kind = e.kind || 'general';
+  const rec = record || null;
+  const cur = e.currentHash;
+  const opened = !!(rec && rec.seenHash != null && rec.seenHash === cur);
+  const newDays = (opts && opts.newBadgeDays != null) ? opts.newBadgeDays : 7;
+  if (kind === 'approval') {
+    const total = e.checkboxTotal || 0;
+    const checked = e.checkboxChecked || 0;
+    const allChecked = total > 0 && checked === total;
+    const everDone = !!(rec && rec.doneHash != null);
+    if (everDone) {
+      if (rec.doneHash !== cur) return 'reapprove';
+      return allChecked ? 'done' : 'reapprove';
+    }
+    if (allChecked) return 'done';
+    return opened ? 'reviewing' : 'new';
+  }
+  if (kind === 'confirm') {
+    const everDone = !!(rec && rec.doneHash != null);
+    if (everDone) return rec.doneHash === cur ? 'done' : 'reapprove';
+    return opened ? 'reviewing' : 'new';
+  }
+  const days = e.updatedDaysAgo;
+  return (typeof days === 'number' && days <= newDays) ? 'new' : null;
+}
+
+// 要旨キャッシュ照合（§1-1b）。summariesMap: {key:{hash,summary}}。key=原典の相対パス。
+export function summaryFor(key, currentHash, summariesMap) {
+  const m = summariesMap || {};
+  const entry = m[key];
+  if (!entry || entry.summary == null) return { summary: null, stale: false, present: false };
+  return { summary: String(entry.summary), stale: entry.hash !== currentHash, present: true };
+}
+
+// 関連単位の機械抽出（§1-2b）。ファイル名（SC-[JFC]_接頭辞を剥いだ本体）＋frontmatter target から。
+export function extractRelatedUnits(fileName, text) {
+  const ids = [];
+  const push = (v) => { const s = String(v || '').trim(); if (s && !ids.includes(s)) ids.push(s); };
+  const base = String(fileName || '').replace(/^.*\//, '').replace(/\.md$/i, '');
+  const stripped = base.replace(/^SC-[JFC]_?/, '');
+  if (stripped) push(stripped);
+  const src = String(text || '');
+  const fmM = /^---\n([\s\S]*?)\n---/.exec(src);
+  if (fmM) {
+    const t = /(^|\n)\s*target\s*:\s*(.+)/.exec(fmM[1]);
+    if (t) {
+      let raw = t[2].trim();
+      if (/^\[.*\]$/.test(raw)) raw.slice(1, -1).split(',').forEach((x) => push(x.replace(/['"]/g, '').trim()));
+      else push(raw.replace(/['"]/g, '').split(/\s+/)[0]);
+    }
+  }
+  return ids;
+}
+
+// 解除インパクト概算（§1-2b・フロンティア逆引きの再利用）。relatedIds を deps に持つ作業単位の総数。
+export function unlockImpact(relatedIds, reverseClosureMap) {
+  const map = reverseClosureMap || {};
+  const set = new Set();
+  for (const id of (relatedIds || [])) {
+    const arr = map[id];
+    if (Array.isArray(arr)) for (const d of arr) set.add(d);
+  }
+  return set.size;
+}
+
+// 統合インボックス対象カード（§1-2c）。AI発（claude-to-user）でユーザーアクションが要る状態。
+export const INBOX_CARD_STATUSES = ['new', 'annotated', 'review', 'done-proposed'];
+export function cardNeedsUserAction(card) {
+  if (!card) return false;
+  if (card.direction !== 'claude-to-user') return false;
+  return INBOX_CARD_STATUSES.includes(card.status);
+}
+
+// 統合インボックス合成（§1-2c）。未処理Sheet（unresolved=true）＋要ユーザーアクションカードを一列に統合し
+// 解除インパクト降順（同率は更新日降順）。空ソースでも壊れない。
+export function buildInbox(sheetItems, cards) {
+  const rows = [];
+  for (const s of (sheetItems || [])) {
+    if (!s || !s.unresolved) continue;
+    rows.push({ kind: 'sheet', source: s.source, file: s.file, title: s.title || s.file, subKind: s.docKind || null, impact: s.impact || 0, updated: s.updated || '', ref: s });
+  }
+  for (const c of (cards || [])) {
+    if (!cardNeedsUserAction(c)) continue;
+    rows.push({ kind: 'card', id: c.id, title: c.title || c.id, status: c.status, type: c.type || null, impact: c.impact || 0, updated: c.updated || c.created || '', ref: c });
+  }
+  rows.sort((a, b) => {
+    if ((b.impact || 0) !== (a.impact || 0)) return (b.impact || 0) - (a.impact || 0);
+    return String(b.updated || '').localeCompare(String(a.updated || ''));
+  });
+  return rows;
+}
+
+// エントリ単位の docKind（scenario ソースは SC-J=display[承認対象外]・SC-F/C=approval を per-file 判定・§1-2a）。
+export function entryDocKind(subcatKind, fileName) {
+  const base = String(fileName || '').replace(/^.*\//, '');
+  if (/^SC-J/.test(base)) return 'display';
+  return subcatKind || 'confirm';
+}
+
+// エントリの共通列（§1-2b）を本文テキストから機械導出（純関数・Dropbox取得は呼び出し側）。
+//   meta: { source, file, sub, subcatKind, flow, mtimeMs }。summaries/reverseClosureMap は任意。
+export function enrichSheetEntryFromText(text, meta, summaries, reverseClosureMap, nowMs) {
+  const m = meta || {};
+  const cs = countSheetCheckboxes(text || '');
+  const currentHash = hashText(text || '');
+  const docKind = entryDocKind(m.subcatKind, m.file);
+  const key = (m.sub ? m.sub + '/' : '') + (m.file || '');
+  const sm = summaryFor(key, currentHash, summaries);
+  const relatedUnits = extractRelatedUnits(m.file, text || '');
+  const impact = unlockImpact(relatedUnits, reverseClosureMap);
+  const heading = ((/^#\s+(.*)$/m.exec(text || '') || [])[1] || '').trim();
+  const allChecked = cs.total > 0 && cs.unchecked === 0;
+  const unresolved = docKind === 'approval' ? !allChecked : (docKind === 'display' ? false : true);
+  const now = (nowMs != null) ? nowMs : Date.now();
+  const updatedDaysAgo = m.mtimeMs ? Math.max(0, Math.floor((now - m.mtimeMs) / 86400000)) : null;
+  let updated = '';
+  if (m.mtimeMs) { const d = new Date(m.mtimeMs); const p = (n) => String(n).padStart(2, '0'); updated = d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()); }
+  return {
+    source: m.source, file: m.file, path: key,
+    title: heading || m.file, heading,
+    docKind, flow: m.flow || null,
+    checkboxTotal: cs.total, checkboxChecked: cs.checked,
+    currentHash, updatedDaysAgo, updated,
+    summary: sm.summary, summaryPresent: sm.present, stale: sm.stale,
+    relatedUnits, impact, unresolved,
+  };
+}

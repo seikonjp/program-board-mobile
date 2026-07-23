@@ -670,3 +670,35 @@ textarea.sheet-comment-input { flex: 1; min-height: 40px; resize: none; }
 .briefing-ul { margin: 4px 0 8px; padding-left: 22px; }
 .briefing-q { margin: 6px 0; padding: 4px 10px; border-left: 3px solid var(--line); color: var(--ink-soft); }
 .briefing-p { margin: 6px 0; }
+
+/* ===== build 30 便1: 状態表現基盤・Sheetトップ再編（§1-1/§1-2） ===== */
+.sheet-legend { margin-bottom: 10px; font-size: 12px; }
+.sheet-legend-sum { cursor: pointer; padding: 4px 0; }
+.sheet-legend-body > div { margin: 3px 0; color: var(--muted, #6b7280); }
+
+.doc-state { display: inline-block; width: 1.4em; text-align: center; font-size: 15px; }
+.doc-state.st-new { color: #c026d3; }
+.doc-state.st-reviewing { color: #d97706; }
+.doc-state.st-done { color: #16a34a; }
+.doc-state.st-reapprove { color: #dc2626; }
+
+.kind-badge { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 10px; border: 1px solid var(--line, #ccc); white-space: nowrap; }
+.kind-approval { background: #eef6ff; color: #1d4ed8; border-color: #bcd6ff; }
+.kind-confirm { background: #f0fdf4; color: #15803d; border-color: #bbf7d0; }
+.kind-display { background: #f3f4f6; color: #6b7280; }
+.kind-card { background: #fef9c3; color: #854d0e; border-color: #fde68a; }
+.stale-badge { display: inline-block; margin-left: 6px; font-size: 10px; padding: 0 6px; border-radius: 8px; background: #fee2e2; color: #b91c1c; }
+.impact-badge { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 10px; background: #f5f3ff; color: #6d28d9; border: 1px solid #ddd6fe; white-space: nowrap; }
+
+.sheet-tagnav { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.sheet-tag-btn { background: var(--panel, #fff); border: 1px solid var(--line, #ccc); border-radius: 16px; padding: 5px 12px; font-size: 13px; }
+.sheet-tag-btn.is-active { background: var(--accent, #1d4ed8); color: #fff; border-color: var(--accent, #1d4ed8); }
+
+.inbox-list, .sheet-entry-list { display: flex; flex-direction: column; gap: 5px; }
+.inbox-row, .sheet-entry { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; background: var(--panel, #fff); border: 1px solid var(--line, #e5e7eb); border-radius: 8px; padding: 9px 10px; }
+.inbox-mid, .entry-mid { flex: 1; min-width: 0; }
+.inbox-title, .entry-title { font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+.inbox-summary, .entry-sub { font-size: 12px; color: var(--muted, #6b7280); display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.entry-units { color: #7c3aed; }
+.entry-updated { color: #9ca3af; }
+.sheet-read.is-read { background: #dcfce7; }

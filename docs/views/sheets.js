@@ -6,20 +6,38 @@
 // データ層は program.js（listSheets/readSheet/addSheetComment/approveSheet）に委譲。
 
 import { registerView } from '../registry.js';
-import { h } from './shared.js';
+import { h, openCardDetail } from './shared.js';
+import { deriveDocState, DOC_STATE_ICON, buildInbox, cardNeedsUserAction, typeLabel, statusLabel } from '../parser.js';
 
 const SHEET_STATE_LABEL = { draft: '起草中', reviewed: '批評済', approved: '承認済' };
 
 let root, listPane, detailPane, sourcesWrap, titleEl, metaEl, bodyEl;
-let sources = [];
+let board = null;          // loadSheetBoard の結果（3画面タグ＋共通列・便1）
+let activeTag = 'inbox';   // 既定ビュー=統合インボックス（§1-2c）
+let currentEntry = null;   // 開いているシートの board エントリ（確認型の読了マーク用）
 let loadedOnce = false;
+
+// 開封・読了の記録＝端末 localStorage（正本へ書かない・§1-1a）。
+const SHEET_OPEN_KEY = 'pbm_sheet_open_v1';
+function readOpenRecords() { try { return JSON.parse(localStorage.getItem(SHEET_OPEN_KEY) || '{}') || {}; } catch { return {}; } }
+function writeOpenRecords(m) { try { localStorage.setItem(SHEET_OPEN_KEY, JSON.stringify(m)); } catch { /* quota */ } }
+function openRecordFor(k) { return readOpenRecords()[k] || null; }
+function markSeen(k, hash) { const m = readOpenRecords(); const r = m[k] || {}; r.seenHash = hash; m[k] = r; writeOpenRecords(m); }
+function markDone(k, hash) { const m = readOpenRecords(); const r = m[k] || {}; r.doneHash = hash; r.seenHash = hash; m[k] = r; writeOpenRecords(m); }
+function stateKindFor(dk) { return dk === 'approval' ? 'approval' : (dk === 'confirm' ? 'confirm' : 'general'); }
+function entryDocState(en) {
+  if (en.docKind === 'approval' && en.checkboxTotal > 0 && en.checkboxChecked === en.checkboxTotal) {
+    const r = openRecordFor(en.path);
+    if (!r || r.doneHash !== en.currentHash) markDone(en.path, en.currentHash);
+  }
+  return deriveDocState({ kind: stateKindFor(en.docKind), checkboxTotal: en.checkboxTotal, checkboxChecked: en.checkboxChecked, currentHash: en.currentHash, updatedDaysAgo: en.updatedDaysAgo }, openRecordFor(en.path));
+}
 
 function create(ctx) {
   root = h('div', 'sheets');
 
-  // 一覧ペイン（ソース別・ファイル名のみ）
+  // 一覧ペイン（3画面タグ＋統合インボックス・便1）
   listPane = h('div', 'sheets-list-pane');
-  listPane.appendChild(h('p', 'view-hint', 'シナリオ・完成定義・RDS を項目単位で表示。項目直下に💬コメント（本文編集はしません）。承認は批評済シートのみ。'));
   sourcesWrap = h('div', 'sheets-sources');
   sourcesWrap.textContent = '読み込み中…';
   listPane.appendChild(sourcesWrap);
@@ -47,38 +65,140 @@ function create(ctx) {
 function onShow(ctx) { if (!loadedOnce) load(ctx); }
 
 async function load(ctx) {
-  if (!ctx.program || !ctx.program.listSheets) return;
+  if (!ctx.program || !ctx.program.loadSheetBoard) return;
+  sourcesWrap.innerHTML = '';
+  sourcesWrap.appendChild(h('p', 'view-hint', '読み込み中…'));
   try {
-    sources = await ctx.program.listSheets();
+    board = await ctx.program.loadSheetBoard();
     loadedOnce = true;
-    renderSources(ctx);
+    renderBoard(ctx);
   } catch (e) {
     sourcesWrap.innerHTML = '';
     sourcesWrap.appendChild(h('p', 'view-hint', 'シートの読み込みに失敗: ' + (e.message || e)));
   }
 }
 
-function renderSources(ctx) {
+function allEntries() {
+  const out = [];
+  ((board && board.tags) || []).forEach((t) => (t.subcategories || []).forEach((sc) => (sc.entries || []).forEach((en) => out.push(en))));
+  return out;
+}
+
+// 全画面共通の凡例（§1-1c・凡例に無い記号は画面に出さない）。モバイルは Sheets 上部に常設。
+function legendDetails() {
+  const d = h('details', 'sheet-legend');
+  d.appendChild(h('summary', 'sheet-legend-sum', '凡例（記号の意味）'));
+  const ul = h('div', 'sheet-legend-body');
+  ul.appendChild(h('div', '', '🆕 新着（未開封） ／ ◐ 確認中 ／ ✓ 完了（全[x]・読了） ／ ↺ 再承認要'));
+  ul.appendChild(h('div', '', '承認＝チェックで承認 ／ 確認＝読了で確認 ／ stale＝要旨が原典より古い'));
+  ul.appendChild(h('div', '', '解除→N＝承認すると動ける作業単位数（概算）'));
+  d.appendChild(ul);
+  return d;
+}
+
+function renderBoard(ctx) {
   sourcesWrap.innerHTML = '';
-  sources.forEach((src) => {
+  sourcesWrap.appendChild(legendDetails());
+  const nav = h('div', 'sheet-tagnav');
+  const tabs = [{ id: 'inbox', label: '📥 インボックス' }].concat(((board && board.tags) || []).map((t) => ({ id: t.id, label: t.label })));
+  tabs.forEach((t) => {
+    const b = h('button', 'sheet-tag-btn' + (activeTag === t.id ? ' is-active' : ''), t.label);
+    b.onclick = () => { activeTag = t.id; renderBoard(ctx); };
+    nav.appendChild(b);
+  });
+  sourcesWrap.appendChild(nav);
+  if (activeTag === 'inbox') renderInbox(ctx);
+  else renderTag(ctx, activeTag);
+}
+
+// 統合インボックス（§1-2c）: 未処理Sheet＋要ユーザーアクションカードを解除インパクト降順で一列。タップ直行。
+function renderInbox(ctx) {
+  sourcesWrap.appendChild(h('p', 'view-hint', 'あなたの承認・確認待ち（未処理Sheet＋応答待ちカード）。解除インパクト降順。タップで直行。'));
+  const recs = readOpenRecords();
+  const sheetItems = allEntries().map((en) => {
+    let unresolved = en.unresolved;
+    if (en.docKind === 'confirm') { const r = recs[en.path]; unresolved = !(r && r.doneHash === en.currentHash); }
+    if (en.docKind === 'display') unresolved = false;
+    return { ...en, unresolved };
+  });
+  const cards = (ctx.state.cards || []).map((c) => ({ ...c, impact: 0 }));
+  const rows = buildInbox(sheetItems, cards);
+  if (!rows.length) { sourcesWrap.appendChild(h('p', 'view-hint', '（未処理はありません）')); return; }
+  const list = h('div', 'inbox-list');
+  rows.forEach((r) => list.appendChild(r.kind === 'sheet' ? inboxSheetRow(ctx, r) : inboxCardRow(ctx, r)));
+  sourcesWrap.appendChild(list);
+}
+
+function kindBadge(dk) {
+  if (dk === 'approval') return h('span', 'kind-badge kind-approval', '承認');
+  if (dk === 'confirm') return h('span', 'kind-badge kind-confirm', '確認');
+  return h('span', 'kind-badge kind-display', '表示');
+}
+function impactBadge(n) { return h('span', 'impact-badge', '解除→' + (n || 0)); }
+function stateIcon(en) { const st = entryDocState(en); const s = h('span', 'doc-state' + (st ? ' st-' + st : '')); s.textContent = st ? DOC_STATE_ICON[st] : ''; return s; }
+
+function inboxSheetRow(ctx, r) {
+  const en = r.ref;
+  const row = h('button', 'inbox-row inbox-sheet');
+  row.appendChild(stateIcon(en));
+  row.appendChild(kindBadge(en.docKind));
+  const mid = h('div', 'inbox-mid');
+  mid.appendChild(h('div', 'inbox-title', (en.flow ? '[' + en.flow + '] ' : '') + en.title));
+  if (en.summary) { const s = h('div', 'inbox-summary', en.summary); if (en.stale) s.appendChild(h('span', 'stale-badge', 'stale')); mid.appendChild(s); }
+  row.appendChild(mid);
+  row.appendChild(impactBadge(en.impact));
+  row.onclick = () => { markSeen(en.path, en.currentHash); openSheet(ctx, en.source, en.file, en); };
+  return row;
+}
+function inboxCardRow(ctx, r) {
+  const c = r.ref;
+  const row = h('button', 'inbox-row inbox-card');
+  row.appendChild(h('span', 'doc-state', '🗂'));
+  row.appendChild(h('span', 'kind-badge kind-card', typeLabel(c.type) || 'カード'));
+  const mid = h('div', 'inbox-mid');
+  mid.appendChild(h('div', 'inbox-title', c.title || c.id));
+  mid.appendChild(h('div', 'inbox-summary', c.id + '・' + (statusLabel(c.status, c.type) || c.status)));
+  row.appendChild(mid);
+  row.onclick = () => openCardDetail(ctx, c);
+  return row;
+}
+
+// タグ別ビュー（開発フロー/設計基盤/RDS）: サブカテゴリ＞エントリ行（共通列）。
+function renderTag(ctx, tagId) {
+  const tag = ((board && board.tags) || []).find((t) => t.id === tagId);
+  if (!tag) { sourcesWrap.appendChild(h('p', 'view-hint', '（該当なし）')); return; }
+  if (tag.pending) { sourcesWrap.appendChild(h('p', 'view-hint', '準備中（便4でB-1〜B-6枠を作成）。')); return; }
+  (tag.subcategories || []).forEach((sc) => {
     const group = h('div', 'sheet-source');
     const head = h('div', 'sheet-source-head');
-    head.appendChild(h('span', 'sheet-source-label', src.label));
-    head.appendChild(h('span', 'sheet-source-count', String(src.files.length)));
+    head.appendChild(h('span', 'sheet-source-label', sc.label));
+    head.appendChild(h('span', 'sheet-source-count', String((sc.entries || []).length)));
     group.appendChild(head);
-    if (!src.files.length) {
-      group.appendChild(h('p', 'view-hint', '（ファイルなし）'));
-    } else {
-      const list = h('div', 'sheet-file-list');
-      src.files.forEach((f) => {
-        const b = h('button', 'sheet-file', f.file);
-        b.onclick = () => openSheet(ctx, src.id, f.file);
-        list.appendChild(b);
-      });
+    if (!(sc.entries || []).length) { group.appendChild(h('p', 'view-hint', '（ファイルなし）')); }
+    else {
+      const list = h('div', 'sheet-entry-list');
+      sc.entries.forEach((en) => list.appendChild(sheetEntryRow(ctx, en)));
       group.appendChild(list);
     }
     sourcesWrap.appendChild(group);
   });
+}
+
+function sheetEntryRow(ctx, en) {
+  const row = h('button', 'sheet-entry');
+  row.appendChild(stateIcon(en));
+  row.appendChild(kindBadge(en.docKind));
+  const mid = h('div', 'entry-mid');
+  mid.appendChild(h('div', 'entry-title', en.title));
+  const sub = h('div', 'entry-sub');
+  if (en.summary) { sub.appendChild(h('span', 'entry-summary', en.summary)); if (en.stale) sub.appendChild(h('span', 'stale-badge', 'stale')); }
+  if (en.relatedUnits && en.relatedUnits.length) sub.appendChild(h('span', 'entry-units', en.relatedUnits.join('・')));
+  if (en.updated) sub.appendChild(h('span', 'entry-updated', en.updated));
+  mid.appendChild(sub);
+  row.appendChild(mid);
+  row.appendChild(impactBadge(en.impact));
+  row.onclick = () => { markSeen(en.path, en.currentHash); openSheet(ctx, en.source, en.file, en); };
+  return row;
 }
 
 function backToList() {
@@ -86,7 +206,8 @@ function backToList() {
   listPane.hidden = false;
 }
 
-async function openSheet(ctx, source, file) {
+async function openSheet(ctx, source, file, entry) {
+  currentEntry = entry || null;
   listPane.hidden = true;
   detailPane.hidden = false;
   titleEl.textContent = file;
@@ -124,6 +245,20 @@ function renderHeaderMeta(ctx, payload) {
   else btn.title = '承認する（' + (meta.reviewCard ? 'reviewカードへOK＋' : '') + 'シートを承認済に更新）';
   btn.onclick = () => approve(ctx, payload.source, payload.file, btn);
   metaEl.appendChild(btn);
+
+  // 確認型シート（D-2/D-4/RDS）: 読了マーク（端末 localStorage・§1-1a）。原典へは書かない。
+  const en = currentEntry;
+  if (en && en.docKind === 'confirm') {
+    const rec = openRecordFor(en.path);
+    const read = !!(rec && rec.doneHash === en.currentHash);
+    const rb = h('button', 'btn-secondary sheet-read' + (read ? ' is-read' : ''), read ? '読了済み ✓' : '読了にする');
+    rb.onclick = () => {
+      if (read) { const m = readOpenRecords(); if (m[en.path]) { delete m[en.path].doneHash; writeOpenRecords(m); } }
+      else markDone(en.path, en.currentHash);
+      renderHeaderMeta(ctx, payload);
+    };
+    metaEl.appendChild(rb);
+  }
 }
 
 function renderSheet(ctx, payload) {

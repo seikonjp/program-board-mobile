@@ -1438,7 +1438,7 @@ test('§2-4(B/C/D) program approve gate + toggle write-back + post-approval reve
 test('㉚ sheets view + group wiring (source-text checks) (v2.2)', () => {
   const sheets = readDoc('views/sheets.js');
   assert.ok(sheets.includes("registerView({ id: 'sheets'"), 'sheets ビューが登録される');
-  assert.ok(sheets.includes('ctx.program.listSheets()') && sheets.includes('ctx.program.readSheet('), '一覧＋開くを program に委譲');
+  assert.ok(sheets.includes('ctx.program.loadSheetBoard()') && sheets.includes('ctx.program.readSheet('), '一覧（3画面タグボード）＋開くを program に委譲（便1で listSheets→loadSheetBoard）');
   assert.ok(sheets.includes('ctx.program.addSheetComment(') && sheets.includes('ctx.program.approveSheet('), 'コメント＋承認を program に委譲');
   assert.ok(sheets.includes('ctx.program.toggleSheetCheckbox('), 'チェックボックスのトグルを program に委譲（§2-4）');
   assert.ok(sheets.includes('未チェック') && sheets.includes('checkStats'), '未チェック残数の表示＋承認ゲート（§2-4 B）');
@@ -1838,4 +1838,116 @@ test('㊹ real data: PROGRESS_AXIS §6 all 55 rows parse (read-only) (v2.9)', ()
   assert.strictEqual(units.length, 55, '§6=55作業単位が全てparse');
   const kinds = new Set(units.map((u) => u.kind));
   ['data', 'infra', 'framework', 'doc', 'ui', 'test'].forEach((k) => assert.ok(kinds.has(k)));
+});
+
+// ===========================================================================
+// build 30 便1（SPEC_V3 §1）— 状態表現基盤・Sheetトップ再編（Mac server.js と挙動互換）
+// ===========================================================================
+
+// §1-1 状態導出＋hash決定性（Mac版と同一結果）
+test('§1-1 deriveDocState + hashText: derivation rules + deterministic hash (build30)', () => {
+  assert.strictEqual(P.hashText('abc'), P.hashText('abc'));
+  assert.notStrictEqual(P.hashText('abc'), P.hashText('abd'));
+  assert.match(P.hashText('abc'), /^[0-9a-f]{8}$/);
+  // Mac版 FNV-1a と同一実装（挙動互換の担保: 既知入力の安定）
+  assert.strictEqual(P.hashText(''), '811c9dc5');
+
+  const H = 'deadbeef';
+  assert.strictEqual(P.deriveDocState({ kind: 'approval', checkboxTotal: 3, checkboxChecked: 0, currentHash: H }, null), 'new');
+  assert.strictEqual(P.deriveDocState({ kind: 'approval', checkboxTotal: 3, checkboxChecked: 1, currentHash: H }, { seenHash: H }), 'reviewing');
+  assert.strictEqual(P.deriveDocState({ kind: 'approval', checkboxTotal: 3, checkboxChecked: 3, currentHash: H }, null), 'done');
+  assert.strictEqual(P.deriveDocState({ kind: 'approval', checkboxTotal: 3, checkboxChecked: 3, currentHash: H }, { seenHash: H, doneHash: 'old' }), 'reapprove');
+  assert.strictEqual(P.deriveDocState({ kind: 'approval', checkboxTotal: 3, checkboxChecked: 2, currentHash: H }, { doneHash: H }), 'reapprove');
+  assert.strictEqual(P.deriveDocState({ kind: 'confirm', currentHash: H }, null), 'new');
+  assert.strictEqual(P.deriveDocState({ kind: 'confirm', currentHash: H }, { seenHash: H }), 'reviewing');
+  assert.strictEqual(P.deriveDocState({ kind: 'confirm', currentHash: H }, { doneHash: H }), 'done');
+  assert.strictEqual(P.deriveDocState({ kind: 'confirm', currentHash: H }, { doneHash: 'old' }), 'reapprove');
+  assert.strictEqual(P.deriveDocState({ kind: 'general', updatedDaysAgo: 3 }, null), 'new');
+  assert.strictEqual(P.deriveDocState({ kind: 'general', updatedDaysAgo: 30 }, null), null);
+  assert.strictEqual(P.deriveDocState({ kind: 'general', updatedDaysAgo: 3 }, null, { newBadgeDays: 1 }), null);
+  assert.deepStrictEqual(Object.keys(P.DOC_STATE_ICON), ['new', 'reviewing', 'done', 'reapprove']);
+});
+
+// §1-2b 共通列: summaryFor（有無/stale）・関連単位抽出
+test('§1-2b common columns: summaryFor + extractRelatedUnits (build30)', () => {
+  const H = P.hashText('body');
+  const map = { 'a/x.md': { hash: H, summary: '一致要旨' }, 'a/y.md': { hash: 'other', summary: '古い要旨' } };
+  assert.deepStrictEqual(P.summaryFor('a/x.md', H, map), { summary: '一致要旨', stale: false, present: true });
+  assert.deepStrictEqual(P.summaryFor('a/y.md', H, map), { summary: '古い要旨', stale: true, present: true });
+  assert.deepStrictEqual(P.summaryFor('a/none.md', H, map), { summary: null, stale: false, present: false });
+  assert.deepStrictEqual(P.extractRelatedUnits('SC-F_PL_AP_ENTP.md', ''), ['PL_AP_ENTP']);
+  const withTarget = '---\ntitle: t\ntarget: [PL_AP_ENTP, ABC101]\n---\n本文';
+  assert.deepStrictEqual(P.extractRelatedUnits('Features/SC-F_X.md', withTarget), ['X', 'PL_AP_ENTP', 'ABC101']);
+});
+
+// §1-2 解除インパクト＋インボックス合成
+test('§1-2 unlockImpact + buildInbox + cardNeedsUserAction (build30)', () => {
+  const rc = { A: ['u1', 'u2', 'u3'], B: ['u2', 'u4'] };
+  assert.strictEqual(P.unlockImpact(['A'], rc), 3);
+  assert.strictEqual(P.unlockImpact(['A', 'B'], rc), 4);
+  assert.strictEqual(P.unlockImpact(['Z'], rc), 0);
+  assert.strictEqual(P.unlockImpact([], {}), 0);
+  assert.strictEqual(P.cardNeedsUserAction({ direction: 'claude-to-user', status: 'review' }), true);
+  assert.strictEqual(P.cardNeedsUserAction({ direction: 'claude-to-user', status: 'consumed' }), false);
+  assert.strictEqual(P.cardNeedsUserAction({ direction: 'user-to-claude', status: 'new' }), false);
+
+  const sheets = [
+    { source: 'scenario', file: 's1.md', title: 'S1', unresolved: true, impact: 1, updated: '2026-07-20' },
+    { source: 'completion', file: 'c1.md', title: 'C1', unresolved: true, impact: 5, updated: '2026-07-10' },
+    { source: 'scenario', file: 's2.md', title: 'S2', unresolved: false, impact: 9, updated: '2026-07-22' },
+  ];
+  const cards = [
+    { id: 'C-A0005', title: 'decision', direction: 'claude-to-user', status: 'new', impact: 3, created: '2026-07-21' },
+    { id: 'C-A0006', title: 'done', direction: 'claude-to-user', status: 'consumed', impact: 8 },
+    { id: 'C-U0001', title: 'mine', direction: 'user-to-claude', status: 'new', impact: 7 },
+  ];
+  const inbox = P.buildInbox(sheets, cards);
+  assert.deepStrictEqual(inbox.map((r) => r.impact), [5, 3, 1]);
+  assert.deepStrictEqual(inbox.map((r) => r.kind), ['sheet', 'card', 'sheet']);
+  assert.deepStrictEqual(P.buildInbox([], []), []);
+  const tie = P.buildInbox([
+    { source: 's', file: 'a', unresolved: true, impact: 2, updated: '2026-07-01' },
+    { source: 's', file: 'b', unresolved: true, impact: 2, updated: '2026-07-05' },
+  ], []);
+  assert.deepStrictEqual(tie.map((r) => r.file), ['b', 'a']);
+});
+
+// §1-2b enrichSheetEntryFromText（純関数・docKind per-file判定・unresolved導出）
+test('§1-2b enrichSheetEntryFromText: checkbox/hash/related/unresolved (build30)', () => {
+  const text = '# デモ\n\n- [ ] CASE-01\n- [x] CASE-02\n';
+  const en = P.enrichSheetEntryFromText(text, { source: 'scenario', file: 'Features/SC-F_DEMO.md', sub: 'Docs/ConOps/Scenarios', subcatKind: 'approval', flow: 'D-1', mtimeMs: 0 }, {}, {});
+  assert.strictEqual(en.docKind, 'approval');
+  assert.strictEqual(en.checkboxTotal, 2);
+  assert.strictEqual(en.checkboxChecked, 1);
+  assert.strictEqual(en.unresolved, true);
+  assert.strictEqual(en.title, 'デモ');
+  assert.deepStrictEqual(en.relatedUnits, ['DEMO']);
+  assert.strictEqual(en.path, 'Docs/ConOps/Scenarios/Features/SC-F_DEMO.md');
+  // SC-J は display（承認対象外・unresolved=false）
+  const j = P.enrichSheetEntryFromText('# 全体\n', { source: 'scenario', file: 'SC-J_FLOW.md', sub: 'Docs/ConOps/Scenarios', subcatKind: 'approval' }, {}, {});
+  assert.strictEqual(j.docKind, 'display');
+  assert.strictEqual(j.unresolved, false);
+});
+
+// §1-2a program.loadSheetBoard: 3画面タグ・空D-2/D-4耐性・SC-F enrich（mock dropbox）
+test('§1-2a program.loadSheetBoard: 3 tags, empty sources safe, SC-F enrich (build30)', async () => {
+  const { program } = mockProgram({
+    '/ArchPlan/Docs/ConOps/Scenarios/Features/SC-F_DEMO.md': '# デモ\n\n- [ ] CASE-01\n- [x] CASE-02\n',
+  }, APP_CONFIG);
+  const board = await program.loadSheetBoard();
+  assert.deepStrictEqual(board.tags.map((t) => t.id), ['flow', 'foundation', 'rds'], '3画面タグ');
+  assert.strictEqual(board.impactApprox, true);
+  const flow = board.tags.find((t) => t.id === 'flow');
+  assert.deepStrictEqual(flow.subcategories.map((s) => s.flow), ['D-1', 'D-2', 'D-3', 'D-4']);
+  const d1 = flow.subcategories.find((s) => s.id === 'scenario');
+  const demo = d1.entries.find((e) => e.file === 'Features/SC-F_DEMO.md');
+  assert.ok(demo, 'SC-F エントリが列挙される');
+  assert.strictEqual(demo.docKind, 'approval');
+  assert.strictEqual(demo.unresolved, true);
+  assert.strictEqual(demo.checkboxTotal, 2);
+  const d2 = flow.subcategories.find((s) => s.id === 'behaviors');
+  assert.deepStrictEqual(d2.entries, [], 'D-2空でも壊れない');
+  const found = board.tags.find((t) => t.id === 'foundation');
+  assert.strictEqual(found.pending, true);
+  assert.deepStrictEqual(found.subcategories, []);
 });

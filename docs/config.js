@@ -63,6 +63,30 @@ export const config = {
     { id: 'rds', label: 'RDS', sub: 'Projects/RequirementManagement/Works/RDS', recurse: false, numbered: true, match: '^RDS_.*\\.md$', exclude: '' },
   ],
 
+  // 便1（v2.10 / build 30）: D-2動作定義・D-4テスト報告の追加ソース（初期は原典未整備＝空一覧で壊れない・§1-2a）。
+  // sheetSources（既存3）は不変更。board 用の拡張ソース。
+  sheetBoardSources: [
+    { id: 'behaviors', label: '動作定義', sub: 'Docs/ConOps/Behaviors', recurse: true, numbered: false, match: '\\.md$', exclude: '^_' },
+    { id: 'testreport', label: 'テスト報告', sub: 'Docs/ConOps/TestReports', recurse: true, numbered: false, match: '\\.md$', exclude: '^_' },
+  ],
+
+  // 3画面タグ（§1-2a）。設計基盤は便4でB-1〜B-6枠を作成＝便1はタグのみ・準備中表示。
+  sheetTags: [
+    { id: 'flow', label: '開発フロー', pending: false, subcategories: [
+      { id: 'scenario', label: 'D-1シナリオ', flow: 'D-1', kind: 'approval', source: 'scenario' },
+      { id: 'behaviors', label: 'D-2動作定義', flow: 'D-2', kind: 'confirm', source: 'behaviors' },
+      { id: 'completion', label: 'D-3完成定義', flow: 'D-3', kind: 'approval', source: 'completion' },
+      { id: 'testreport', label: 'D-4テスト報告', flow: 'D-4', kind: 'confirm', source: 'testreport' },
+    ] },
+    { id: 'foundation', label: '設計基盤', pending: true, subcategories: [] },
+    { id: 'rds', label: 'RDS', pending: false, subcategories: [
+      { id: 'rds', label: 'R-1 RDS文書', flow: null, kind: 'confirm', source: 'rds' },
+    ] },
+  ],
+
+  // summaries.json（AI補助キャッシュ・§1-1b）。アプリは生成しない（器のみ）。sheetArchplanRoot 相対。未存在→{}。
+  summariesSub: 'Program/data/summaries.json',
+
   // Views 進捗ソース（config化・sheetArchplanRoot 相対・アダプタ型で正規化・v2.3）。
   // 差し替え（初版census→合流後FEATURE_LIST）は sub+type の変更のみ。
   progressSources: {

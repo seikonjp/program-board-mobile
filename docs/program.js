@@ -134,6 +134,21 @@ export function createProgram(dropbox, config) {
     return bytes;
   }
 
+  // 実フォルダ名のみ軽量走査（採番直前再走査用・非recursive・SPEC_V3 §1-3a モバイル方針）。
+  async function listCardDirNames() {
+    let entries;
+    try { entries = await dropbox.listFolder(cardsRoot, { recursive: false }); }
+    catch (e) { if (isNotFound(e)) return []; throw e; }
+    const out = [];
+    for (const ent of entries) {
+      if (ent['.tag'] !== 'folder') continue;
+      const name = ent.path_display.slice(cardsRoot.length + 1);
+      if (name === TRASH_DIR || name === ARCHIVE_DIR) continue;
+      if (/^C-[UA]?\d+/.test(name)) out.push(name);
+    }
+    return out;
+  }
+
   // ---- 新規カード作成 ----
   // input: { title, body, direction, type, images:[{name, bytes(Uint8Array)}] }
   async function createCard(input, currentCardDirs) {
@@ -149,9 +164,13 @@ export function createProgram(dropbox, config) {
     const subject = (input.subject || '').trim();
     const date = P.today();
 
-    // ID 衝突（別端末との競合）に備え add モードで最大 3 回まで採番リトライ。
-    let created = null;
+    // 採番の直前に実フォルダを再走査（別端末との競合をできるだけ避ける）。取得失敗時は手持ちで続行。
     let names = dirs.slice();
+    try { const fresh = await listCardDirNames(); if (fresh && fresh.length) names = fresh; }
+    catch { /* ネットワーク不調時は currentCardDirs で続行 */ }
+
+    // ID 衝突（別端末との競合）に備え add モードで最大 3 回まで採番リトライ（衝突時は再走査分を加味）。
+    let created = null;
     for (let attempt = 0; attempt < 3 && !created; attempt++) {
       const id = P.nextCardId(names);
       const slug = P.slugify(input.title || id);
@@ -697,10 +716,70 @@ export function createProgram(dropbox, config) {
     return { ...P.ticketMeta(dir, text), body: P.parseTicket(text).body };
   }
 
+  // ---- Sheetボード（便1 / build 30・§1-2）: 3画面タグ＋共通列（要旨/stale・関連単位・解除インパクト概算） ----
+  // board 用の全ソース（既存3＋D-2/D-4）。既存 sheetSources は不変更。
+  const allBoardSources = sheetSources.concat(config.sheetBoardSources || []);
+  function boardSourceById(id) { return allBoardSources.find((s) => s.id === id) || null; }
+
+  // summaries.json（AI補助キャッシュ・器のみ・§1-1b）。未存在→{}（無事故）。
+  async function loadSummaries() {
+    if (!config.summariesSub) return {};
+    try { const { text } = await dropbox.download(join(archplanRoot, config.summariesSub)); return JSON.parse(text) || {}; }
+    catch { return {}; }
+  }
+
+  // 1ソースのファイル一覧＋更新時刻（server_modified）。未存在は空一覧で無事故。
+  async function listFilesForSource(source) {
+    const base = sheetBase(source);
+    let entries = [];
+    try { entries = await dropbox.listFolder(base, { recursive: !!source.recurse }); }
+    catch (e) { if (!isNotFound(e)) throw e; entries = []; }
+    const files = [];
+    for (const ent of entries) {
+      if (ent['.tag'] !== 'file') continue;
+      const rel = ent.path_display.slice(base.length + 1);
+      if (!sheetFileAllowed(source, basename(rel))) continue;
+      files.push({ file: rel, mtimeMs: ent.server_modified ? Date.parse(ent.server_modified) : 0 });
+    }
+    files.sort((a, b) => a.file.localeCompare(b.file));
+    return files;
+  }
+
+  // 3画面タグの enriched ボード。Sheetsタブ表示時に取得（本文DLを伴う＝ユーザー操作契機）。空ソースでも壊れない。
+  async function loadSheetBoard() {
+    const summaries = await loadSummaries();
+    let reverseClosureMap = {};
+    try { const prog = await loadProgress(); reverseClosureMap = (prog && prog.reverseClosure) || {}; } catch { reverseClosureMap = {}; }
+    const now = Date.now();
+    const tags = [];
+    for (const tag of (config.sheetTags || [])) {
+      const subcategories = [];
+      for (const sc of (tag.subcategories || [])) {
+        const src = boardSourceById(sc.source);
+        const entries = [];
+        if (src) {
+          const files = await listFilesForSource(src);
+          for (const f of files) {
+            let text = '';
+            try { const dl = await dropbox.download(join(sheetBase(src), f.file)); text = dl.text; } catch { text = ''; }
+            entries.push(P.enrichSheetEntryFromText(text,
+              { source: src.id, file: f.file, sub: src.sub, subcatKind: sc.kind, flow: sc.flow, mtimeMs: f.mtimeMs },
+              summaries, reverseClosureMap, now));
+          }
+        }
+        subcategories.push({ id: sc.id, label: sc.label, flow: sc.flow || null, kind: sc.kind, source: sc.source || null, entries });
+      }
+      tags.push({ id: tag.id, label: tag.label, pending: !!tag.pending, subcategories });
+    }
+    return { tags, impactApprox: true };
+  }
+
   return {
     root,
     cardsRoot,
     loadCards,
+    loadSheetBoard,
+    loadSummaries,
     listSessions,
     readSession,
     listSheets,
