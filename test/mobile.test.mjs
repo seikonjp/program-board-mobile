@@ -433,10 +433,10 @@ test('⑪ 混在桁 ID は数値順に採番・ソートされる', () => {
 // ---------------------------------------------------------------------------
 // ⑫ タブ順（v1.4）＋ Report タブ抽出（type=report・cardsForType 再利用）
 // ---------------------------------------------------------------------------
-test('⑫ 最上位ナビ4群（v2.2）＋Cards群の第2階層タブ順', () => {
-  // 最上位ナビ = Cards / Sheets / Views / Sessions（この順）
-  assert.deepStrictEqual(enabledGroups().map((g) => g.id), ['cards', 'sheets', 'views', 'sessions'], '群の順');
-  assert.deepStrictEqual(enabledGroups().map((g) => g.label), ['Cards', 'Sheets', 'Views', 'Sessions'], '群のラベル');
+test('⑫ 最上位ナビ5群（便5で進捗を独立タブ追加）＋Cards群の第2階層タブ順', () => {
+  // 最上位ナビ = Cards / Sheets / 進捗 / Views / Sessions（この順）
+  assert.deepStrictEqual(enabledGroups().map((g) => g.id), ['cards', 'sheets', 'progress', 'views', 'sessions'], '群の順');
+  assert.deepStrictEqual(enabledGroups().map((g) => g.label), ['Cards', 'Sheets', '進捗', 'Views', 'Sessions'], '群のラベル');
   // Cards 群の第2階層タブ順（v1.8 の8タブを内包）
   assert.deepStrictEqual(
     enabledViewIdsForGroup('cards'),
@@ -445,12 +445,14 @@ test('⑫ 最上位ナビ4群（v2.2）＋Cards群の第2階層タブ順', () =>
   );
   // 各群の単一ビュー・所属判定
   assert.deepStrictEqual(enabledViewIdsForGroup('sheets'), ['sheets']);
+  assert.deepStrictEqual(enabledViewIdsForGroup('progress'), ['progressboard'], '進捗群の単一ビュー（便5）');
   assert.deepStrictEqual(enabledViewIdsForGroup('views'), ['views']);
   assert.deepStrictEqual(enabledViewIdsForGroup('sessions'), ['sessions']);
   assert.strictEqual(viewGroup('board'), 'cards');
   assert.strictEqual(viewGroup('sheets'), 'sheets');
+  assert.strictEqual(viewGroup('progressboard'), 'progress');
   // enabledViewIds は全群のビューを config 順で返す（動的 import 用）
-  assert.deepStrictEqual(enabledViewIds(), ['board', 'reference', 'knowledge', 'consult', 'decision', 'report', 'tray', 'memo', 'completed', 'sheets', 'views', 'sessions']);
+  assert.deepStrictEqual(enabledViewIds(), ['board', 'reference', 'knowledge', 'consult', 'decision', 'report', 'tray', 'memo', 'completed', 'sheets', 'progressboard', 'views', 'sessions']);
 });
 
 test('⑫b cardsForType(type=report) は report カードのみ抽出（Report タブ）', () => {
@@ -2325,4 +2327,112 @@ test('㊳c(便4) program.readOriginFile: whitelist guard', async () => {
   assert.ok(Array.isArray(ok.blocks));
   await assert.rejects(() => program.readOriginFile('Program/Cards/C-U0000_TEMPLATE/card.md'), /対象外/, 'リスト外は拒否');
   await assert.rejects(() => program.readOriginFile('../secret'), /対象外/, '.. 逸脱は拒否');
+});
+
+// ========================================================================
+// 便5（build 34）進捗タブ（SPEC_V3 §5・PROGRESS_TAB_UI_DRAFT）
+// 純関数の fixture テスト（Mac server.js と挙動互換）＋ program.loadProgressBoard の耐性。
+// ========================================================================
+
+test('㊴(便5) parseCaseNums / parseRequestedByEntry: 単体・リスト・範囲・非SC-F', () => {
+  assert.deepStrictEqual(P.parseCaseNums('CASE-07'), [7]);
+  assert.deepStrictEqual(P.parseCaseNums('CASE-01/02/03/04/07/12/16'), [1, 2, 3, 4, 7, 12, 16]);
+  assert.deepStrictEqual(P.parseCaseNums('CASE-01〜25'), Array.from({ length: 25 }, (_, i) => i + 1));
+  assert.deepStrictEqual(P.parseCaseNums('CASE-19④/CASE-21'), [19, 21]);
+  const r = P.parseRequestedByEntry('SC-F_PL_AP_ENTP CASE-01〜25');
+  assert.strictEqual(r.scenario, 'PL_AP_ENTP');
+  assert.strictEqual(r.cases.length, 25);
+  assert.strictEqual(P.parseRequestedByEntry('BD_PL_AP_ENTP BD-01〜10').scenario, null);
+});
+
+test('㊵(便5) parseImplRegistry: 正常＋壊れJSONの縮退', () => {
+  const good = JSON.stringify({ units: [{ id: 'A', kind: 'FW', state: '完了', deps: [], requestedBy: [] }], derived: { frontier: { units: [{ id: 'A' }] } } });
+  const g = P.parseImplRegistry(good);
+  assert.strictEqual(g.ok, true);
+  assert.deepStrictEqual(g.frontier, ['A']);
+  assert.strictEqual(P.parseImplRegistry('{ not json').ok, false);
+  assert.strictEqual(P.parseImplRegistry('{"meta":{}}').ok, false);
+});
+
+test('㊶(便5) buildScenarioFeature: グループ／CASE抽出／非CASE除外', () => {
+  const md = [
+    '---', 'id: SC-F_X', 'title: SC-F_X テスト機能', '---', '# SC-F_X テスト機能',
+    '## 材料規格', '- [x] 材料チェック（CASEでない・除外）',
+    '## ケース表', '### 正常系',
+    '- [x] **CASE-01 標準（正常系）**', '  🟢 実装可',
+    '- [ ] **CASE-02 別（正常系）**',
+    '### 優雅な失敗', '- [x] **CASE-03 失敗（優雅な失敗）**',
+  ].join('\n');
+  const f = P.buildScenarioFeature('X', md);
+  assert.strictEqual(f.caseByNum.size, 3, 'CASE-NNのみ・非CASE除外');
+  assert.strictEqual(f.caseByNum.get(1).checked, true);
+  assert.strictEqual(f.caseByNum.get(2).checked, false);
+  assert.strictEqual(f.groups.find((g) => /正常系/.test(g.heading)).classification, '正常系');
+});
+
+test('㊷(便5) deriveUnitColor / deriveGroupColor: 5色＋不明', () => {
+  assert.strictEqual(P.deriveUnitColor('完了', 0, 5, false, null), 'done');
+  assert.strictEqual(P.deriveUnitColor('待ち', 0, 5, false, null), 'unappr');
+  assert.strictEqual(P.deriveUnitColor('待ち', 3, 5, false, null), 'waiting');
+  assert.strictEqual(P.deriveUnitColor('不明', 2, 5, false, null), 'unknown');
+  assert.strictEqual(P.deriveUnitColor('完了', 0, 0, false, 'red'), 'stopped');
+  assert.strictEqual(P.deriveGroupColor(3, 3, 3, 3, '進行中', false, false), 'done');
+  assert.strictEqual(P.deriveGroupColor(0, 3, 0, 3, '待ち', false, false), 'unappr');
+});
+
+test('㊸(便5) stateMiniExplain: 自動生成＋依存の1辺1行', () => {
+  const w = P.stateMiniExplain('unappr', { scenN: 3, scenM: 16 });
+  assert.ok(/未承認/.test(w.why) && /承認/.test(w.next));
+  const y = P.stateMiniExplain('waiting', { scenN: 3, scenM: 5, state: '待ち', ready: true, deps: [{ id: 'FW-Z', name: '構造図', state: '進行中' }] });
+  assert.strictEqual(y.depLines.length, 1);
+  assert.ok(/\[依存\] FW-Z/.test(y.depLines[0]) && /解消待ち/.test(y.depLines[0]));
+});
+
+test('㊹(便5) buildProgressBoard: 3層tree・被覆・作業順序・分布（Mac互換）', () => {
+  const scenX = ['# SC-F_X', '## ケース表', '### 正常系',
+    '- [x] **CASE-01 A（正常系）**', '- [x] **CASE-02 B（正常系）**',
+    '### 優雅な失敗', '- [ ] **CASE-03 C（優雅な失敗）**'].join('\n');
+  const registry = JSON.stringify({
+    units: [
+      { id: 'X_AUTO', name: '自動', kind: 'FPU', state: '進行中', stage: 'S1', deps: ['FW-A'], dependents: ['Y'], requestedBy: ['SC-F_X CASE-01/02/03'] },
+      { id: 'FW-A', name: '基盤A', kind: 'FW', state: '完了', stage: 'S1', deps: [], dependents: ['X_AUTO'], golden: '凍結', requestedBy: ['SC-F_X CASE-01'] },
+      { id: 'CMP-Q', name: '部品Q', kind: 'CMP', state: '完了', stage: 'S1', deps: [], requestedBy: ['（CMP契約テスト管轄）'] },
+    ],
+    derived: { frontier: { units: [{ id: 'FW-A' }] } },
+  });
+  const board = P.buildProgressBoard({ registryText: registry, scenarios: [{ code: 'X', text: scenX }], completionByFeature: { X: { present: true, total: 0, checked: 0, approved: false } } });
+  assert.strictEqual(board.ok, true);
+  const fx = board.features.find((f) => f.code === 'X');
+  assert.strictEqual(fx.scenM, 3);
+  assert.strictEqual(fx.scenN, 2);
+  const cmp = board.features.find((f) => f.code === '__CMP');
+  assert.ok(cmp && cmp.synthetic);
+  assert.strictEqual(cmp.units[0].color, 'done');
+  assert.strictEqual(fx.units.find((u) => u.id === 'FW-A').ready, true);
+  assert.strictEqual(board.workItems[0].order, 1);
+  assert.strictEqual(board.workItems[0].marker, 'done');
+});
+
+test('㊺(便5) program.loadProgressBoard: Dropbox読取り経路・source状況', async () => {
+  const scenX = '# SC-F_X\n## ケース表\n### 正常系\n- [x] **CASE-01 A（正常系）**\n- [ ] **CASE-02 B（正常系）**\n';
+  const registry = JSON.stringify({
+    units: [{ id: 'X_AUTO', name: '自動', kind: 'FPU', state: '進行中', deps: [], requestedBy: ['SC-F_X CASE-01/02'] }],
+    derived: { frontier: { units: [] } },
+  });
+  const { program } = mockProgram({
+    '/ArchPlan/archplan-core/Docs/Implementation/IMPL_REGISTRY.json': registry,
+    '/ArchPlan/Docs/ConOps/Scenarios/Features/SC-F_X.md': scenX,
+  }, APP_CONFIG);
+  const pay = await program.loadProgressBoard();
+  assert.strictEqual(pay.sources.registry, true);
+  assert.strictEqual(pay.sources.scenarios, 1, '参照SC-Fを1本読めた');
+  assert.strictEqual(pay.counts.units, 1);
+  const fx = pay.features.find((f) => f.code === 'X');
+  assert.strictEqual(fx.scenN, 1);
+  assert.strictEqual(fx.scenM, 2);
+  // registry未存在でも壊れない（縮退）
+  const { program: p2 } = mockProgram({}, APP_CONFIG);
+  const empty = await p2.loadProgressBoard();
+  assert.strictEqual(empty.sources.registry, false);
+  assert.strictEqual(empty.ok, false, 'registry無し=縮退ok:false（偽装しない）');
 });

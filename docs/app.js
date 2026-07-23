@@ -139,6 +139,8 @@ const ctx = {
   prepareImages: (files) => prepareImages(files, config.imageMaxEdge),
   // 書き込み後の再取得（キャッシュ無効化のうえフル同期）。
   reload: async () => { cardCache = new Map(); await refresh({ quiet: true }); },
+  // 進捗タブ（便5）の対象ページ直行: モバイルは Sheets 群へ切替（リンク割り振り精密版は◆5=Sheet/Library確定後）。
+  openSheet: (source, file) => { setTab('sheets'); },
 };
 
 // ---- ビュー生成・タブ（最上位ナビ4群＋第2階層タブ・v2.2） ----

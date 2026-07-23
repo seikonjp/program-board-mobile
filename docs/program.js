@@ -629,6 +629,42 @@ export function createProgram(dropbox, config) {
     return P.buildProgressPayload({ censusText, comText, axisText, ledgerText, lanesText, testText, coText });
   }
 
+  // 進捗タブ（便5・build 34）: IMPL_REGISTRY → 参照 SC-F のみ読む（需要駆動）＋完成定義照合。読み取り専用。
+  const progressBoardCfg = config.progressBoard || {};
+  async function loadProgressBoard() {
+    const registryText = await readViewText(progressBoardCfg.registrySub);
+    const reg = P.parseImplRegistry(registryText);
+    // requestedBy から参照 SC-F コードを集める（需要駆動）。
+    const codes = new Set();
+    for (const u of reg.units) for (const r of P.unitScenarioRefs(u)) if (r.scenario) codes.add(r.scenario);
+    const codeArr = [...codes];
+    const scenTexts = await Promise.all(codeArr.map((code) => readViewText((progressBoardCfg.scenarioDir || '') + '/' + (progressBoardCfg.scenarioPrefix || 'SC-F_') + code + '.md')));
+    const scenarios = codeArr.map((code, i) => ({ code, text: scenTexts[i] }));
+    // 完成定義（D-3）承認: ファイル存在＋全チェック[x]（実データは総数0＝approved:false・正直）。
+    const completionByFeature = {};
+    const complEntries = Object.entries(progressBoardCfg.completionMap || {});
+    for (const [code, files] of complEntries) {
+      const texts = await Promise.all(files.map((rel) => readViewText((progressBoardCfg.completionBase || '') + '/' + rel)));
+      let present = false, total = 0, checked = 0, file = null;
+      texts.forEach((t, i) => { if (t != null) { present = true; if (!file) file = files[i]; const cs = P.countSheetCheckboxes(t); total += cs.total; checked += cs.checked; } });
+      completionByFeature[code] = { present, total, checked, approved: present && total > 0 && checked === total, file };
+    }
+    const testText = await readViewText((config.progressSources && config.progressSources.testStatus && config.progressSources.testStatus.sub) || null);
+    const testStatusMap = P.parseTestStatus(testText) || {};
+    const board = P.buildProgressBoard({ registryText, scenarios, completionByFeature, testStatusMap });
+    return {
+      ...board,
+      sources: {
+        registry: registryText != null,
+        registryOk: reg.ok,
+        scenarios: scenarios.filter((s) => s.text != null).length,
+        scenariosReferenced: scenarios.length,
+        testStatus: registryText != null && Object.keys(testStatusMap || {}).length > 0,
+      },
+      completionByFeature,
+    };
+  }
+
   function librarySourceById(id) { return librarySources.find((s) => s.id === id) || null; }
 
   // ライブラリ軸一覧（get_metadata で存在確認＝大きいファイルは落とさない・v2.3）。
@@ -895,6 +931,7 @@ export function createProgram(dropbox, config) {
     approveSheet,
     toggleSheetCheckbox,
     loadProgress,
+    loadProgressBoard,
     listLibrary,
     readLibraryItem,
     // 便4（§4）: RDSナビ・Library原典

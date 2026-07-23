@@ -2017,3 +2017,227 @@ export function parseRdsComments(text) {
   finalize();
   return { total, unaddressedCount: unaddressed.length, unaddressed };
 }
+
+// ===========================================================================
+// 進捗タブ（便5・build 34・SPEC_V3 §5・PROGRESS_TAB_UI_DRAFT）純関数群
+// Mac server.js と同名・挙動互換。機能＞実装単位＞CASEグループの3層を
+// IMPL_REGISTRY.requestedBy → SC-F CASE 結合で構築。状態5色は導出できる源からのみ導出。
+// スコープ境界: 依存精密版・解除インパクト精密版・フロンティア算出・GO判定は本便で作らない
+//   （◆辺スキーマ後）。出発可(ready)は生成器の derived.frontier を「読む」だけ。
+// ===========================================================================
+
+export const BOARD_STATE_ORDER = ['done', 'running', 'stopped', 'waiting', 'unappr', 'unknown'];
+export const BOARD_STATE_META = {
+  done:    { name: '実装済み',       color: 'green' },
+  running: { name: '実装中',         color: 'blue' },
+  stopped: { name: '停止',           color: 'red' },
+  waiting: { name: '出発待ち',       color: 'yellow' },
+  unappr:  { name: '未実装（未承認）', color: 'gray' },
+  unknown: { name: '不明',           color: 'unknown' },
+};
+
+export function parseCaseNums(str) {
+  const s = String(str == null ? '' : str);
+  const nums = new Set();
+  const re = /CASE-\s*0*(\d+)((?:\s*[/／]\s*0*\d+)*)(?:\s*[〜～\-–—]\s*(?:CASE-\s*)?0*(\d+))?/g;
+  let m;
+  while ((m = re.exec(s)) !== null) {
+    const a = parseInt(m[1], 10); nums.add(a);
+    if (m[2]) for (const p of (m[2].match(/\d+/g) || [])) nums.add(parseInt(p, 10));
+    if (m[3] != null) { const b = parseInt(m[3], 10); if (b >= a && b - a < 200) { for (let n = a; n <= b; n++) nums.add(n); } else nums.add(b); }
+  }
+  return [...nums].sort((x, y) => x - y);
+}
+export function parseRequestedByEntry(entry) {
+  const s = String(entry == null ? '' : entry);
+  const m = /SC-F_([A-Z0-9_]+)/.exec(s);
+  const scenario = m ? m[1] : null;
+  return { scenario, cases: scenario ? parseCaseNums(s) : [] };
+}
+export function unitScenarioRefs(unit) {
+  return ((unit && unit.requestedBy) || []).map(parseRequestedByEntry).filter((r) => r.scenario);
+}
+export function parseImplRegistry(text) {
+  let data = null;
+  try { data = JSON.parse(String(text == null ? '' : text)); } catch { return { ok: false, units: [], frontier: [], byState: {}, byKind: {}, meta: {} }; }
+  const units = Array.isArray(data && data.units) ? data.units : [];
+  let frontier = [];
+  try { frontier = (data.derived.frontier.units || []).map((u) => u.id).filter(Boolean); } catch { frontier = []; }
+  const byState = {}, byKind = {};
+  for (const u of units) { byState[u.state] = (byState[u.state] || 0) + 1; byKind[u.kind] = (byKind[u.kind] || 0) + 1; }
+  return { ok: units.length > 0, units, frontier, byState, byKind, meta: (data && data.meta) || {} };
+}
+export function buildScenarioFeature(code, text) {
+  const p = parseCard(String(text == null ? '' : text));
+  const meta = parseScenarioMeta(String(text == null ? '' : text));
+  const blocks = parseSheetBlocks(p.body, false);
+  const groups = [];
+  let cur = null;
+  const caseByNum = new Map();
+  for (const b of blocks) {
+    if (b.kind === 'heading') {
+      cur = { id: code + '::' + b.index, heading: b.heading, classification: detectCaseClassification(b.heading), cases: [] };
+    } else if (b.kind === 'case') {
+      const cm = /CASE-0*(\d+)/.exec(b.heading || '');
+      if (!cm) continue;
+      const num = parseInt(cm[1], 10);
+      if (!cur) cur = { id: code + '::top', heading: '（グループなし）', classification: null, cases: [] };
+      const raw = p.body.slice(b.start, b.end);
+      const mk = caseImplMarker(raw);
+      const cls = cur.classification || detectCaseClassification(b.heading);
+      const c = { num, caseId: 'CASE-' + cm[1], checked: !!b.checked, marker: mk.marker, classification: cls, groupId: cur.id, groupHeading: cur.heading };
+      cur.cases.push(c);
+      caseByNum.set(num, c);
+      if (groups.indexOf(cur) < 0) groups.push(cur);
+    }
+  }
+  return { code, name: meta.title || code, groups: groups.filter((g) => g.cases.length > 0), caseByNum, source: text != null };
+}
+export function caseImplState(coverUnits) {
+  if (!coverUnits || !coverUnits.length) return 'none';
+  const st = coverUnits.map((u) => u.state);
+  if (st.every((s) => s === '完了')) return 'done';
+  if (st.some((s) => s === '進行中' || s === '完了')) return 'progress';
+  if (st.some((s) => s === '待ち' || s === '未着手')) return 'pending';
+  return 'unknown';
+}
+export function deriveUnitColor(regState, scenN, scenM, laneActive, testColor) {
+  if (testColor === 'red') return 'stopped';
+  if (regState === '完了') return 'done';
+  if (regState === '進行中' || laneActive) return 'running';
+  if (scenM > 0 && scenN === 0) return 'unappr';
+  if (regState === '待ち' || regState === '未着手') return 'waiting';
+  return 'unknown';
+}
+export function deriveGroupColor(scenN, scenM, implDone, total, unitState, laneActive, testRed) {
+  if (testRed) return 'stopped';
+  if (total > 0 && implDone === total) return 'done';
+  if (unitState === '完了') return 'done';
+  if (unitState === '進行中' || laneActive) return 'running';
+  if (scenM > 0 && scenN === 0) return 'unappr';
+  if (scenN > 0 || unitState === '待ち' || unitState === '未着手') return 'waiting';
+  return 'unknown';
+}
+export function caseSetMetrics(cases, coverage, code) {
+  let scenN = 0, implDone = 0;
+  const total = (cases || []).length;
+  for (const c of (cases || [])) {
+    if (c.checked) scenN++;
+    const cov = coverage.get(code + '#' + c.num) || [];
+    if (caseImplState(cov) === 'done') implDone++;
+  }
+  return { scenN, scenM: total, implDone, implTotal: total };
+}
+export function stateMiniExplain(colorKey, ctx) {
+  const c = ctx || {};
+  const why = [], next = [];
+  const gold = c.golden && c.golden !== 'なし' ? '（GOLDEN被覆あり）' : '';
+  if (colorKey === 'done') { why.push('実装単位=完了' + gold); }
+  else if (colorKey === 'running') { why.push('実装単位=進行中（作業中）'); next.push('テスト緑で実装済みへ'); }
+  else if (colorKey === 'stopped') { why.push('テストが赤（停止）'); next.push('テスト緑で回復'); }
+  else if (colorKey === 'waiting') {
+    if (c.scenM > 0) why.push('シナリオ承認 ' + (c.scenN || 0) + '/' + c.scenM + '・実装証跡なし（' + (c.state || '') + '）');
+    else why.push('実装未着手（' + (c.state || '') + '）');
+    next.push(c.ready ? '出発可（依存充足）→ 実装着手で実装中へ' : '実装着手で実装中へ');
+  } else if (colorKey === 'unappr') { why.push('シナリオ未承認（承認 ' + (c.scenN || 0) + '/' + (c.scenM || 0) + '）＝走行資格なし'); next.push('残りCASEの承認で走行資格が付く'); }
+  else { why.push('導出源が揃わない（' + (c.state || '') + '）'); }
+  const depLines = ((c.deps) || []).filter((d) => d.state !== '完了').map((d) => '[依存] ' + d.id + (d.name ? '（' + String(d.name).slice(0, 24) + '）' : '') + ' → ' + (d.state || '—') + '解消待ち');
+  return { why: why.join('・'), next: next.join('・'), depLines };
+}
+export function buildProgressBoard(inp) {
+  const reg = parseImplRegistry(inp && inp.registryText);
+  const scenarios = (inp && inp.scenarios) || [];
+  const completionByFeature = (inp && inp.completionByFeature) || {};
+  const testStatusMap = (inp && inp.testStatusMap) || {};
+  const frontierSet = new Set(reg.frontier);
+  const feats = new Map();
+  for (const sc of scenarios) feats.set(sc.code, buildScenarioFeature(sc.code, sc.text));
+  const unitById = new Map(reg.units.map((u) => [u.id, u]));
+
+  const coverage = new Map();
+  for (const u of reg.units) for (const r of unitScenarioRefs(u)) {
+    const f = feats.get(r.scenario); if (!f) continue;
+    for (const n of r.cases) {
+      if (!f.caseByNum.has(n)) continue;
+      const k = r.scenario + '#' + n;
+      if (!coverage.has(k)) coverage.set(k, []);
+      if (!coverage.get(k).includes(u)) coverage.get(k).push(u);
+    }
+  }
+
+  const SYN = { __CMP: 'CMP・共通処理部品', __FW: '横断基盤・FW', __OTHER: 'その他' };
+  const unitsByFeature = new Map();
+  for (const u of reg.units) {
+    const refs = unitScenarioRefs(u);
+    let code = refs.length && feats.has(refs[0].scenario) ? refs[0].scenario : null;
+    if (!code) code = (u.kind === 'CMP') ? '__CMP' : (u.kind === 'FW' ? '__FW' : '__OTHER');
+    if (!unitsByFeature.has(code)) unitsByFeature.set(code, []);
+    unitsByFeature.get(code).push(u);
+  }
+
+  const dist = {}; BOARD_STATE_ORDER.forEach((k) => (dist[k] = 0));
+  const featureRows = [];
+  const workItems = [];
+  const orderedCodes = [...feats.keys()].concat(['__CMP', '__FW', '__OTHER'].filter((c) => unitsByFeature.has(c)));
+  for (const code of orderedCodes) {
+    const f = feats.get(code);
+    const units = unitsByFeature.get(code) || [];
+    const compl = completionByFeature[code] || null;
+    const unitRows = [];
+    for (const u of units) {
+      const refs = unitScenarioRefs(u);
+      let scenN = 0, scenM = 0, implDone = 0, implTotal = 0;
+      const uGroups = [];
+      if (f) {
+        const myRef = refs.find((r) => r.scenario === code);
+        const myNums = myRef ? myRef.cases : [];
+        const byGroup = new Map();
+        for (const n of myNums) { const cc = f.caseByNum.get(n); if (!cc) continue; if (!byGroup.has(cc.groupId)) byGroup.set(cc.groupId, []); byGroup.get(cc.groupId).push(cc); }
+        for (const g of f.groups) {
+          const cs = byGroup.get(g.id); if (!cs) continue;
+          const mtr = caseSetMetrics(cs, coverage, code);
+          const gColor = deriveGroupColor(mtr.scenN, mtr.scenM, mtr.implDone, mtr.implTotal, u.state, false, false);
+          scenN += mtr.scenN; scenM += mtr.scenM; implDone += mtr.implDone; implTotal += mtr.implTotal;
+          uGroups.push({ id: g.id, heading: g.heading, classification: g.classification, scenN: mtr.scenN, scenM: mtr.scenM, implDone: mtr.implDone, implTotal: mtr.implTotal, color: gColor,
+            cases: cs.map((cc) => ({ caseId: cc.caseId, checked: cc.checked, marker: cc.marker, implState: caseImplState(coverage.get(code + '#' + cc.num) || []) })) });
+        }
+      }
+      const tsEntry = testStatusFor([u.id], testStatusMap);
+      const testColor = tsEntry ? testColorFor(testStatusMap, { joinKey: u.id, name: u.name }) : null;
+      const color = deriveUnitColor(u.state, scenN, scenM, false, testColor);
+      dist[color] = (dist[color] || 0) + 1;
+      const depDetails = (u.deps || []).map((d) => { const du = unitById.get(d); return { id: d, name: du ? du.name : null, state: du ? du.state : null }; });
+      const mini = stateMiniExplain(color, { scenN, scenM, state: u.state, ready: frontierSet.has(u.id), golden: u.golden, deps: depDetails });
+      unitRows.push({ id: u.id, name: u.name, kind: u.kind, state: u.state, stage: u.stage, color, scenN, scenM, implDone, implTotal,
+        ready: frontierSet.has(u.id), deps: depDetails, dependents: u.dependents || [], golden: u.golden || null, evidence: u.evidence || null, notes: u.notes || null,
+        completion: compl, groups: uGroups, mini });
+      const groupsForWork = uGroups.length ? uGroups : [{ id: u.id + '::self', heading: u.name, scenN, scenM, implDone, implTotal, color }];
+      for (const g of groupsForWork) {
+        let marker;
+        if (g.implTotal > 0 && g.implDone === g.implTotal) marker = 'done';
+        else if (u.state === '完了') marker = 'done';
+        else if (u.state === '進行中') marker = 'running';
+        else if (frontierSet.has(u.id)) marker = 'ready';
+        else if (u.state === '待ち' || u.state === '未着手') marker = 'blocked';
+        else marker = 'todo';
+        const blockReason = (marker === 'blocked') ? (depDetails.filter((d) => d.state !== '完了').map((d) => d.id).join('・') || (u.state + '待ち')) : null;
+        workItems.push({ groupId: g.id, featureCode: code, featureName: f ? f.name : SYN[code], unitId: u.id, unitName: u.name, heading: g.heading, marker, color: g.color, ready: frontierSet.has(u.id), blockReason });
+      }
+    }
+    let fm = { scenN: 0, scenM: 0, implDone: 0, implTotal: 0 };
+    if (f) fm = caseSetMetrics([...f.caseByNum.values()], coverage, code);
+    const fColor = f ? deriveGroupColor(fm.scenN, fm.scenM, fm.implDone, fm.implTotal, null, false, false) : 'unknown';
+    featureRows.push({ code, name: f ? f.name : SYN[code], synthetic: !f, units: unitRows, scenN: fm.scenN, scenM: fm.scenM, implDone: fm.implDone, implTotal: fm.implTotal, color: fColor, completion: compl });
+  }
+
+  const RANK = { done: 0, running: 1, ready: 2, todo: 3, blocked: 4 };
+  const stableIdx = new Map(workItems.map((w, i) => [w, i]));
+  workItems.sort((a, b) => ((RANK[a.marker] == null ? 9 : RANK[a.marker]) - (RANK[b.marker] == null ? 9 : RANK[b.marker])) || (stableIdx.get(a) - stableIdx.get(b)));
+  workItems.forEach((w, i) => { w.order = i + 1; });
+
+  return {
+    ok: reg.ok, features: featureRows, workItems, dist,
+    counts: { units: reg.units.length, features: featureRows.length, groups: workItems.length, byKind: reg.byKind, byState: reg.byState },
+    frontier: reg.frontier, meta: reg.meta,
+  };
+}

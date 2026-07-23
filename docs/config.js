@@ -41,15 +41,18 @@ export const config = {
     { id: 'completed', enabled: true, group: 'cards' }, // 完了ビュー（consumed＋アーカイブ・2026-07-17）
 
     { id: 'sheets', enabled: true, group: 'sheets' },
+    // 進捗タブ（便5・build 34・独立タブ）: 進捗リスト＋作業順序リスト。
+    { id: 'progressboard', enabled: true, group: 'progress' },
     // Views / Sessions は Phase 3/4 で実装予定＝準備中の空状態のみ（タブは出す）。
     { id: 'views', enabled: true, group: 'views' },
     { id: 'sessions', enabled: true, group: 'sessions' },
   ],
 
-  // 最上位ナビ（4群・v2.2）。表示順＝この順。
+  // 最上位ナビ（5群・便5で進捗を独立タブ追加）。表示順＝この順。
   groups: [
     { id: 'cards', label: 'Cards' },
     { id: 'sheets', label: 'Sheets' },
+    { id: 'progress', label: '進捗' },
     { id: 'views', label: 'Views' },
     { id: 'sessions', label: 'Sessions' },
   ],
@@ -141,6 +144,20 @@ export const config = {
     lanes: { sub: 'Projects/TestSystem/LANES_BOARD_2026-07.md', type: 'lanes' },
     testStatus: { sub: 'archplan-core/Docs/TestDefinitions/test_status.json', type: 'testStatus' },
     carryover: { sub: 'Program/CARRYOVER.md', type: 'carryover' },
+  },
+
+  // 進捗タブ（便5・build 34）。IMPL_REGISTRY → 参照 SC-F のみ読む（需要駆動）。sheetArchplanRoot 相対。
+  // completionMap は機能コード→D-3完成定義ファイル（completionBase 相対）。実データは全て未チェック=完成定義承認は — 表示（正直）。
+  progressBoard: {
+    registrySub: 'archplan-core/Docs/Implementation/IMPL_REGISTRY.json',
+    scenarioDir: 'Docs/ConOps/Scenarios/Features',
+    scenarioPrefix: 'SC-F_',
+    completionBase: 'archplan-core/Docs/TestDefinitions',
+    completionMap: {
+      PL_SP_SP: ['features/敷地配置.md', 'features/敷地方向判定.md'],
+      PL_AP_ENTP: ['features/玄関配置.md', 'PL_AP_ENTP.md'],
+      PL_SP_PKP: ['features/駐車場配置.md'],
+    },
   },
 
   // Sessions（起動チケット・v2.4・Phase4）。programRoot 直下 'Sessions'（S-*/briefing.md）。
