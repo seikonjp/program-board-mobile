@@ -1961,6 +1961,9 @@ export function enrichSheetEntryFromText(text, meta, summaries, reverseClosureMa
   try { approval = sheetApprovalSummary(parseSheetBlocks(parseCard(text || '').body, m.numbered)); } catch { /* 空でも壊れない */ }
   const groupSummaries = approval.groups.map((g) => ({ heading: g.heading, headingIndex: g.headingIndex, total: g.total, approvedCount: g.approvedCount, approved: g.approved }));
   const scenarioMeta = parseScenarioMeta(text || '');
+  // RDSナビ（§4・便4）: rds ソースのみ 💬未対応数を機械count（他ソースは null＝非表示）。
+  let rdsUnaddressed = null;
+  if (m.source === 'rds') { try { rdsUnaddressed = parseRdsComments(text || '').unaddressedCount; } catch { rdsUnaddressed = null; } }
   return {
     source: m.source, file: m.file, path: key,
     title: heading || m.file, heading,
@@ -1971,5 +1974,46 @@ export function enrichSheetEntryFromText(text, meta, summaries, reverseClosureMa
     relatedUnits, impact, unresolved,
     groups: groupSummaries, docApproved: approval.allApproved,
     stage: scenarioMeta.stage || null, statusDecl: scenarioMeta.status || null, layer: scenarioMeta.layer || null,
+    rdsUnaddressed,
   };
+}
+
+// RDSナビ（§4・便4）— 純関数（server と同名・挙動互換）。原典は一切変更しない（読み取り表示のみ）。
+// 💬未対応＝「💬マーカーの後にユーザー記入内容があり、かつ その💬から次の💬（または次の `## ` 見出し境界／EOF）
+// までに ↳応答が無い」もの。空の💬スロット（記入内容なし）＝記入待ちは未対応に数えない（偽装しない）。
+//   戻り: { total, unaddressedCount, unaddressed:[{ line, blockIndex, reqId, heading, snippet }] }
+export function parseRdsComments(text) {
+  const body = parseCard(String(text == null ? '' : text)).body;
+  const lines = body.split('\n');
+  const blocks = parseSheetBlocks(body, true);
+  const lineOffset = [];
+  let off = 0;
+  for (let i = 0; i < lines.length; i++) { lineOffset.push(off); off += lines[i].length + 1; }
+  const blockOf = (lineIdx) => {
+    const o = lineOffset[lineIdx];
+    for (let k = blocks.length - 1; k >= 0; k--) { if (o >= blocks[k].start) return blocks[k].index; }
+    return -1;
+  };
+  let heading = null, reqId = null, pending = null, total = 0;
+  const unaddressed = [];
+  const finalize = () => { if (pending) { unaddressed.push(pending); pending = null; } };
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const hm = /^##\s+(.*)$/.exec(line);
+    if (hm) { finalize(); heading = hm[1].trim(); const rm = /REQ-[A-Za-z0-9_-]+/.exec(heading); reqId = rm ? rm[0] : null; continue; }
+    const ci = line.indexOf('💬');
+    if (ci >= 0) {
+      finalize();
+      let after = line.slice(ci + '💬'.length);
+      const note = /^\s*[（(][^）)]*[）)]/.exec(after);
+      if (note) after = after.slice(note[0].length);
+      const content = after.replace(/^[:：\s]+/, '').trim();
+      if (content !== '') { total++; pending = { line: i, blockIndex: blockOf(i), reqId, heading, snippet: content.length > 80 ? content.slice(0, 80) + '…' : content }; }
+      else pending = null;
+      continue;
+    }
+    if (/^\s*↳/.test(line)) { pending = null; continue; }
+  }
+  finalize();
+  return { total, unaddressedCount: unaddressed.length, unaddressed };
 }

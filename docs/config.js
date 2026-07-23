@@ -79,9 +79,52 @@ export const config = {
       { id: 'completion', label: 'D-3完成定義', flow: 'D-3', kind: 'approval', source: 'completion' },
       { id: 'testreport', label: 'D-4テスト報告', flow: 'D-4', kind: 'confirm', source: 'testreport' },
     ] },
-    { id: 'foundation', label: '設計基盤', pending: true, subcategories: [] },
+    // 設計基盤（§4・便4）: B-1〜B-6の枠（画面枠）のみ。各サブカテゴリ pending=準備中（個別加工表示は後日ひとつずつ確定）。
+    { id: 'foundation', label: '設計基盤', pending: false, subcategories: [
+      { id: 'B-1', label: 'B-1 コム・種体系', pending: true },
+      { id: 'B-2', label: 'B-2 設定項目', pending: true },
+      { id: 'B-3', label: 'B-3 設計条件', pending: true },
+      { id: 'B-4', label: 'B-4 品質基準', pending: true },
+      { id: 'B-5', label: 'B-5 操作', pending: true },
+      { id: 'B-6', label: 'B-6 画面', pending: true },
+    ] },
     { id: 'rds', label: 'RDS', pending: false, subcategories: [
       { id: 'rds', label: 'R-1 RDS文書', flow: null, kind: 'confirm', source: 'rds' },
+    ] },
+  ],
+
+  // Library原典（Sheetの原典層・§4・便4）。初期スコープ=Sheet原典のみ（対応表11行）。
+  // 表示はSheetと同方式（3画面タグ・共通列）だが状態=「変更から一定期間の新着アイコンのみ」（承認ライフサイクルなし）。
+  // 実パスが特定できないものは kind:'unknown'＝「未整備（原典未特定）」を正直表示。棚卸し便◆7で後日確定・差し替え前提。
+  // match/exclude は sheetArchplanRoot 相対の basename に適用する正規表現（文字列）。
+  libraryNewBadgeDays: 7,
+  libraryOriginTags: [
+    { id: 'flow', label: '開発フロー', subcategories: [
+      { id: 'D-1', label: 'D-1 シナリオ', origins: [ { label: 'Scenarios（SC-J/F/C・SC_MAP）', kind: 'dir', sub: 'Docs/ConOps/Scenarios', match: '\\.md$', exclude: '^_' } ] },
+      { id: 'D-2', label: 'D-2 動作定義', origins: [ { label: 'BD文書', kind: 'dir', sub: 'Docs/ConOps/Behaviors', match: '\\.md$', exclude: '^_' } ] },
+      { id: 'D-3', label: 'D-3 完成定義', origins: [ { label: 'TestDefinitions・QS→テスト対応表', kind: 'dir', sub: 'archplan-core/Docs/TestDefinitions', match: '\\.md$', exclude: '^_' } ] },
+      { id: 'D-4', label: 'D-4 テスト報告', origins: [ { label: '報告文書＋提出物の実体', kind: 'dir', sub: 'archplan-core/Docs/TestReports', match: '\\.md$', exclude: '^_' } ] },
+    ] },
+    { id: 'foundation', label: '設計基盤', subcategories: [
+      { id: 'B-1', label: 'B-1 コム・種体系', origins: [
+        { label: 'SPECIES_LIST', kind: 'file', sub: 'Projects/DataStructure/Works/W3_定義作成/SPECIES_LIST.md' },
+        { label: '種スキーマ G01〜G14', kind: 'dir', sub: 'Projects/DataStructure/Works/W3_定義作成', match: '^G\\d+_SCHEMA\\.md$' } ] },
+      { id: 'B-2', label: 'B-2 設定項目', origins: [ { label: 'settingData定義・実行時代入census', kind: 'unknown' } ] },
+      { id: 'B-3', label: 'B-3 設計条件', origins: [
+        { label: 'CONDITIONS_LIST', kind: 'file', sub: 'Projects/DataStructure/Works/W3_定義作成/CONDITIONS_LIST.md' },
+        { label: 'ELEMENT_CATALOG', kind: 'file', sub: 'archplan-core/Docs/Conditions/ELEMENT_CATALOG.md' } ] },
+      { id: 'B-4', label: 'B-4 品質基準', origins: [
+        { label: 'VALIDATION_RULES.json（正）', kind: 'file', sub: 'archplan-core/Docs/Quality/VALIDATION_RULES.json' },
+        { label: 'VALIDATION_RULES.md（閲覧版）', kind: 'file', sub: 'archplan-core/Docs/Quality/VALIDATION_RULES.md' } ] },
+      { id: 'B-5', label: 'B-5 操作', origins: [ { label: 'OPERATION_ROUTING_TABLE（操作カタログ成果）', kind: 'file', sub: 'Projects/OperationManagement/OPERATION_ROUTING_TABLE.md' } ] },
+      { id: 'B-6', label: 'B-6 画面', origins: [
+        { label: 'SCREEN_FRAMEWORK', kind: 'file', sub: 'Docs/UI/SCREEN_FRAMEWORK.md' },
+        { label: 'SCREEN_LIST（画面一覧）', kind: 'file', sub: 'Projects/ScreenManagement/SCREEN_LIST.md' } ] },
+    ] },
+    { id: 'rds', label: 'RDS', subcategories: [
+      { id: 'R-1', label: 'R-1 RDS', origins: [
+        { label: 'RDS文書・RDS_INDEX', kind: 'dir', sub: 'Projects/RequirementManagement/Works/RDS', match: '^RDS_.*\\.md$' },
+        { label: 'REQUIREMENT_MAP', kind: 'file', sub: 'Docs/Requirements/REQUIREMENT_MAP.md' } ] },
     ] },
   ],
 

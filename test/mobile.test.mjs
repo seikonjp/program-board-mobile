@@ -1951,9 +1951,11 @@ test('§1-2a program.loadSheetBoard: 3 tags, empty sources safe, SC-F enrich (bu
   assert.strictEqual(demo.checkboxTotal, 2);
   const d2 = flow.subcategories.find((s) => s.id === 'behaviors');
   assert.deepStrictEqual(d2.entries, [], 'D-2空でも壊れない');
+  // 設計基盤（便4・§4）: タグ pending:false・B-1〜B-6の枠（各サブカテゴリ pending:true・entries空）。
   const found = board.tags.find((t) => t.id === 'foundation');
-  assert.strictEqual(found.pending, true);
-  assert.deepStrictEqual(found.subcategories, []);
+  assert.strictEqual(found.pending, false, 'タグ自体は準備中でない（枠を作成済み）');
+  assert.deepStrictEqual(found.subcategories.map((s) => s.id), ['B-1', 'B-2', 'B-3', 'B-4', 'B-5', 'B-6'], 'B-1〜B-6の枠');
+  assert.ok(found.subcategories.every((s) => s.pending === true && s.entries.length === 0), '各枠は準備中・エントリ無し');
 });
 
 // ===========================================================================
@@ -2228,4 +2230,99 @@ test('㉟(便3) config: testreport 既定=archplan-core/Docs/TestReports・sheet
   assert.ok(ids.includes('behaviors') && ids.includes('testreport'));
   const tr = (APP_CONFIG.sheetBoardSources || []).find((s) => s.id === 'testreport');
   assert.strictEqual(tr.sub, 'archplan-core/Docs/TestReports', 'D-4 config = archplan-core/Docs/TestReports');
+});
+
+// ===========================================================================
+// build 33（v2.13・SPEC_V3 §4）: 設計基盤6タグ枠・RDSナビ（💬未対応）・Library原典
+// （Mac server.js の便4テストと挙動互換・純関数を fixture で固定＋mock dropbox）
+// ===========================================================================
+
+// ㊲ RDSナビ（§4）: 未対応💬の機械count（Mac ㊲ と同値）。
+test('㊲(便4) parseRdsComments: content-💬 without ↳ counted, empty & ↳-addressed excluded', () => {
+  const t = [
+    '# RDS — X', '',
+    '## REQ-X-001 タイトル', '',
+    '1. [人間] 決めること',
+    '  💬 これは記入あり（未解決）', '',
+    '2. [AI] 別項目',
+    '  💬', '',                                 // 空スロット＝記入待ち（数えない）
+    '💬（この要件全体について） 全体コメント',
+    '↳【確定】応答した', '',                       // 直前の💬を解決
+    '## REQ-X-002 別要件', '',
+    '1. [人間] もう一つ',
+    '  💬 記入あり2（未解決）', '',
+  ].join('\n');
+  const r = P.parseRdsComments(t);
+  assert.strictEqual(r.total, 3, '内容ありの💬は3件（空スロットは含めない）');
+  assert.strictEqual(r.unaddressedCount, 2, '↳解決の1件を除く未対応2件');
+  assert.ok(r.unaddressed.every((u) => u.snippet && u.reqId && u.blockIndex >= 0), '各未対応にsnippet/reqId/blockIndex');
+  assert.strictEqual(r.unaddressed[0].reqId, 'REQ-X-001');
+  assert.strictEqual(r.unaddressed[1].reqId, 'REQ-X-002');
+  assert.strictEqual(P.parseRdsComments('').unaddressedCount, 0);
+  assert.strictEqual(P.parseRdsComments(null).total, 0);
+});
+
+// ㊲b RDSナビ: enrichSheetEntryFromText が rds ソースに rdsUnaddressed を付与（他ソースは null）。
+test('㊲b(便4) enrichSheetEntryFromText attaches rdsUnaddressed for rds only', () => {
+  const rdsText = '## REQ-A-1 x\n\n1. [人間] a\n  💬 未対応コメント\n';
+  const rdsEn = P.enrichSheetEntryFromText(rdsText, { source: 'rds', file: 'RDS_A.md', sub: 'Projects/RequirementManagement/Works/RDS', subcatKind: 'confirm', numbered: true }, {}, {});
+  assert.strictEqual(rdsEn.rdsUnaddressed, 1, 'rds は未対応💬数を持つ');
+  const scEn = P.enrichSheetEntryFromText('# 空\n', { source: 'scenario', file: 'SC-F_X.md', sub: 'Docs/ConOps/Scenarios', subcatKind: 'approval' }, {}, {});
+  assert.strictEqual(scEn.rdsUnaddressed, null, '非rdsソースは null（非表示）');
+});
+
+// ㊲c RDSナビ: program.loadRdsComments（mock dropbox）で未対応一覧をジャンプ用に取得。
+test('㊲c(便4) program.loadRdsComments returns unaddressed list for jump', async () => {
+  const { program } = mockProgram({
+    '/ArchPlan/Projects/RequirementManagement/Works/RDS/RDS_DEMO.md': '## REQ-D-1 x\n\n1. [人間] a\n  💬 未対応\n\n2. [AI] b\n  💬\n',
+  }, APP_CONFIG);
+  const r = await program.loadRdsComments('RDS_DEMO.md');
+  assert.strictEqual(r.file, 'RDS_DEMO.md');
+  assert.strictEqual(r.unaddressedCount, 1, '内容ありで未解決の1件');
+  assert.ok(r.unaddressed[0].blockIndex >= 0, 'ジャンプ用blockIndex');
+});
+
+// ㊳ Library原典（§4）: config の対応表11行・特定できるものは available:true・unknown は未整備（偽装しない）。
+test('㊳(便4) config.libraryOriginTags: 対応表11行・3画面タグ・B-2 unknown', () => {
+  const tags = APP_CONFIG.libraryOriginTags || [];
+  assert.deepStrictEqual(tags.map((t) => t.id), ['flow', 'foundation', 'rds'], '3画面タグ');
+  const subs = tags.flatMap((t) => t.subcategories.map((s) => s.id));
+  assert.deepStrictEqual(subs, ['D-1', 'D-2', 'D-3', 'D-4', 'B-1', 'B-2', 'B-3', 'B-4', 'B-5', 'B-6', 'R-1'], '対応表11行');
+  const b2 = tags.find((t) => t.id === 'foundation').subcategories.find((s) => s.id === 'B-2');
+  assert.strictEqual(b2.origins[0].kind, 'unknown', 'B-2 は原典未特定');
+  assert.strictEqual(APP_CONFIG.libraryNewBadgeDays, 7, '新着期間=config値');
+});
+
+// ㊳b Library原典: program.loadLibraryOrigins（mock dropbox）で特定/未整備を正直に区別。
+test('㊳b(便4) program.loadLibraryOrigins: resolved vs 未整備 honest (mock)', async () => {
+  const { program } = mockProgram({
+    '/ArchPlan/Projects/DataStructure/Works/W3_定義作成/SPECIES_LIST.md': '# 種一覧\n',
+    '/ArchPlan/Projects/DataStructure/Works/W3_定義作成/G01_SCHEMA.md': '# G01\n',
+    '/ArchPlan/archplan-core/Docs/Conditions/ELEMENT_CATALOG.md': '# 条件\n',
+  }, APP_CONFIG);
+  const board = await program.loadLibraryOrigins();
+  assert.deepStrictEqual(board.tags.map((t) => t.id), ['flow', 'foundation', 'rds']);
+  assert.strictEqual(board.originsOnly, true);
+  const b1 = board.tags.find((t) => t.id === 'foundation').subcategories.find((s) => s.id === 'B-1');
+  assert.strictEqual(b1.origins[0].available, true, 'SPECIES_LIST は特定済み');
+  assert.ok(b1.origins[0].entries.length >= 1);
+  const b2 = board.tags.find((t) => t.id === 'foundation').subcategories.find((s) => s.id === 'B-2');
+  assert.strictEqual(b2.origins[0].available, false, 'B-2 は未整備');
+  assert.ok(/未整備/.test(b2.origins[0].reason));
+  // 未存在ファイル（VALIDATION_RULES 等）は available:false（偽装しない）。
+  const b4 = board.tags.find((t) => t.id === 'foundation').subcategories.find((s) => s.id === 'B-4');
+  assert.strictEqual(b4.origins[0].available, false, '未配置ファイルは未整備表示');
+});
+
+// ㊳c Library原典: readOriginFile はホワイトリスト内のみ（任意パス読取り拒否）。
+test('㊳c(便4) program.readOriginFile: whitelist guard', async () => {
+  const { program } = mockProgram({
+    '/ArchPlan/archplan-core/Docs/Conditions/ELEMENT_CATALOG.md': '# 条件\n- x\n',
+    '/ArchPlan/Program/Cards/C-U0000_TEMPLATE/card.md': 'secret',
+  }, APP_CONFIG);
+  const ok = await program.readOriginFile('archplan-core/Docs/Conditions/ELEMENT_CATALOG.md');
+  assert.strictEqual(ok.type, 'md');
+  assert.ok(Array.isArray(ok.blocks));
+  await assert.rejects(() => program.readOriginFile('Program/Cards/C-U0000_TEMPLATE/card.md'), /対象外/, 'リスト外は拒否');
+  await assert.rejects(() => program.readOriginFile('../secret'), /対象外/, '.. 逸脱は拒否');
 });

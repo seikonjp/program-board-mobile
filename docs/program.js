@@ -762,7 +762,8 @@ export function createProgram(dropbox, config) {
     for (const tag of (config.sheetTags || [])) {
       const subcategories = [];
       for (const sc of (tag.subcategories || [])) {
-        const src = boardSourceById(sc.source);
+        // 設計基盤 B-1〜B-6（§4・便4）: source 無し＝枠のみ（pending＝準備中表示）。ファイルDLは行わない。
+        const src = sc.source ? boardSourceById(sc.source) : null;
         const entries = [];
         if (src) {
           const files = await listFilesForSource(src);
@@ -770,15 +771,114 @@ export function createProgram(dropbox, config) {
             let text = '';
             try { const dl = await dropbox.download(join(sheetBase(src), f.file)); text = dl.text; } catch { text = ''; }
             entries.push(P.enrichSheetEntryFromText(text,
-              { source: src.id, file: f.file, sub: src.sub, subcatKind: sc.kind, flow: sc.flow, mtimeMs: f.mtimeMs },
+              { source: src.id, file: f.file, sub: src.sub, subcatKind: sc.kind, flow: sc.flow, numbered: src.numbered, mtimeMs: f.mtimeMs },
               summaries, reverseClosureMap, now));
           }
         }
-        subcategories.push({ id: sc.id, label: sc.label, flow: sc.flow || null, kind: sc.kind, source: sc.source || null, entries });
+        subcategories.push({ id: sc.id, label: sc.label, flow: sc.flow || null, kind: sc.kind || null, source: sc.source || null, pending: !!sc.pending, entries });
       }
       tags.push({ id: tag.id, label: tag.label, pending: !!tag.pending, subcategories });
     }
     return { tags, impactApprox: true };
+  }
+
+  // ---- RDSナビ（§4・便4）: 未対応💬の一覧＋機械count（該当箇所ジャンプ用）。原典は読み取りのみ。 ----
+  async function loadRdsComments(file) {
+    const source = sheetSourceById('rds');
+    if (!source) throw new Error('RDSソースがありません');
+    sheetAssertFile(source, file);
+    const { text } = await dropbox.download(join(sheetBase(source), file));
+    return Object.assign({ file }, P.parseRdsComments(text));
+  }
+
+  // ---- Library原典（Sheetの原典層・§4・便4）: 初期スコープ=Sheet原典のみ（対応表11行）。 ----
+  // 状態＝「変更から一定期間の新着アイコンのみ」（承認ライフサイクルなし・mtime基準の一般文書扱い）。
+  const libraryNewBadgeDays = config.libraryNewBadgeDays != null ? config.libraryNewBadgeDays : 7;
+  const libraryOriginTags = config.libraryOriginTags || [];
+
+  function originEntryState(mtimeMs, now) {
+    const updatedDaysAgo = mtimeMs ? Math.max(0, Math.floor((now - mtimeMs) / 86400000)) : null;
+    let updated = '';
+    if (mtimeMs) { const d = new Date(mtimeMs); const p = (n) => String(n).padStart(2, '0'); updated = d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()); }
+    const state = P.deriveDocState({ kind: 'general', updatedDaysAgo }, null, { newBadgeDays: libraryNewBadgeDays });
+    return { updatedDaysAgo, updated, state: state || null };
+  }
+
+  // 原典1件の解決（dir=配下の該当ファイル列挙／file=存在確認／unknown=原典未特定）。未存在は available:false（正直表示）。
+  async function resolveOrigin(origin, now) {
+    const o = origin || {};
+    if (o.kind === 'unknown' || !o.sub) return { label: o.label, kind: o.kind || 'unknown', available: false, reason: '未整備（原典未特定）', entries: [] };
+    const base = join(archplanRoot, o.sub);
+    if (o.kind === 'file') {
+      let mtimeMs = 0;
+      try { const md = await dropbox.getMetadata(base); mtimeMs = md.server_modified ? Date.parse(md.server_modified) : 0; }
+      catch (e) { if (!isNotFound(e)) throw e; return { label: o.label, kind: 'file', sub: o.sub, available: false, reason: '未整備（原典未特定）', entries: [] }; }
+      return { label: o.label, kind: 'file', sub: o.sub, available: true, entries: [Object.assign({ file: o.sub, name: basename(o.sub), dir: o.sub.replace(/\/[^/]*$/, '') }, originEntryState(mtimeMs, now))] };
+    }
+    // dir
+    const matchRe = o.match ? new RegExp(o.match) : null;
+    const excludeRe = o.exclude ? new RegExp(o.exclude) : null;
+    let list = [];
+    try { list = await dropbox.listFolder(base, { recursive: true }); }
+    catch (e) { if (!isNotFound(e)) throw e; return { label: o.label, kind: 'dir', sub: o.sub, available: false, reason: '未整備（原典未特定）', entries: [] }; }
+    const entries = [];
+    for (const ent of list) {
+      if (ent['.tag'] !== 'file') continue;
+      const rel = ent.path_display.slice(base.length + 1);
+      const name = basename(rel);
+      if (matchRe && !matchRe.test(name)) continue;
+      if (excludeRe && excludeRe.test(name)) continue;
+      if (/^_/.test(name)) continue;
+      const mtimeMs = ent.server_modified ? Date.parse(ent.server_modified) : 0;
+      entries.push(Object.assign({ file: o.sub + '/' + rel, name, dir: (o.sub + '/' + rel).replace(/\/[^/]*$/, '') }, originEntryState(mtimeMs, now)));
+    }
+    entries.sort((a, b) => a.file.localeCompare(b.file));
+    if (!entries.length) return { label: o.label, kind: 'dir', sub: o.sub, available: false, reason: '未整備（原典未特定）', entries: [] };
+    return { label: o.label, kind: 'dir', sub: o.sub, available: true, entries };
+  }
+
+  // Library原典ボード（3画面タグ×サブカテゴリ×原典）。Library原典タブ表示時に取得。
+  async function loadLibraryOrigins() {
+    const now = Date.now();
+    const tags = [];
+    for (const tag of libraryOriginTags) {
+      const subcategories = [];
+      for (const sc of (tag.subcategories || [])) {
+        const origins = [];
+        for (const o of (sc.origins || [])) origins.push(await resolveOrigin(o, now));
+        subcategories.push({ id: sc.id, label: sc.label, origins });
+      }
+      tags.push({ id: tag.id, label: tag.label, subcategories });
+    }
+    return { tags, newBadgeDays: libraryNewBadgeDays, originsOnly: true };
+  }
+
+  // 設定済み原典（file/dir）のホワイトリスト判定（任意パス読取り拒否）。
+  function originAllows(relPath) {
+    const rel = String(relPath || '').replace(/^\/+/, '');
+    if (rel === '' || rel.split('/').some((s) => s === '..' || s === '')) return false;
+    for (const tag of libraryOriginTags) {
+      for (const sc of (tag.subcategories || [])) {
+        for (const o of (sc.origins || [])) {
+          if (!o.sub) continue;
+          if (o.kind === 'file') { if (rel === o.sub) return true; }
+          else if (o.kind === 'dir') { if (rel.startsWith(o.sub + '/') && (!o.match || new RegExp(o.match).test(basename(rel)))) return true; }
+        }
+      }
+    }
+    return false;
+  }
+
+  // 原典1件の読み取り（ホワイトリスト内のみ・md=見出しブロック＋raw／json=raw+整形）。読み取り表示のみ・書き込みなし。
+  async function readOriginFile(sub) {
+    if (!originAllows(sub)) throw new Error('対象外の原典パスです: ' + sub);
+    const { text } = await dropbox.download(join(archplanRoot, sub));
+    if (/\.json$/i.test(sub)) {
+      let pretty = text, parsedOk = false;
+      try { pretty = JSON.stringify(JSON.parse(text), null, 2); parsedOk = true; } catch { /* 生 */ }
+      return { file: sub, name: basename(sub), type: 'json', text, pretty, parsedOk };
+    }
+    return { file: sub, name: basename(sub), type: 'md', text, blocks: P.libraryMdBlocks(text) };
   }
 
   return {
@@ -797,6 +897,10 @@ export function createProgram(dropbox, config) {
     loadProgress,
     listLibrary,
     readLibraryItem,
+    // 便4（§4）: RDSナビ・Library原典
+    loadRdsComments,
+    loadLibraryOrigins,
+    readOriginFile,
     createViewCommentCard,
     downloadImage,
     createCard,

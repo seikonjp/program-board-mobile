@@ -171,11 +171,19 @@ function inboxCardRow(ctx, r) {
 function renderTag(ctx, tagId) {
   const tag = ((board && board.tags) || []).find((t) => t.id === tagId);
   if (!tag) { sourcesWrap.appendChild(h('p', 'view-hint', '（該当なし）')); return; }
-  if (tag.pending) { sourcesWrap.appendChild(h('p', 'view-hint', '準備中（便4でB-1〜B-6枠を作成）。')); return; }
+  if (tag.pending) { sourcesWrap.appendChild(h('p', 'view-hint', '準備中。')); return; }
   (tag.subcategories || []).forEach((sc) => {
-    const group = h('div', 'sheet-source');
+    const group = h('div', 'sheet-source' + (sc.pending ? ' sheet-source-pending' : ''));
     const head = h('div', 'sheet-source-head');
     head.appendChild(h('span', 'sheet-source-label', sc.label));
+    // 設計基盤 B-1〜B-6（§4・便4）: 枠のみ＝準備中（個別加工表示は後日ひとつずつ確定）。
+    if (sc.pending) {
+      head.appendChild(h('span', 'sheet-source-pending-badge', '準備中'));
+      group.appendChild(head);
+      group.appendChild(h('p', 'view-hint', '準備中（個別表示は後日ひとつずつ確定）'));
+      sourcesWrap.appendChild(group);
+      return;
+    }
     head.appendChild(h('span', 'sheet-source-count', String((sc.entries || []).length)));
     group.appendChild(head);
     if (!(sc.entries || []).length) { group.appendChild(h('p', 'view-hint', '（ファイルなし）')); }
@@ -193,13 +201,26 @@ function sheetEntryRow(ctx, en) {
   const wrap = h('div', 'sheet-entry-wrap');
   const row = h('div', 'sheet-entry');
   const groups = en.groups || [];
+  const isRds = en.source === 'rds' && typeof en.rdsUnaddressed === 'number';
+  const hasRds = isRds && en.rdsUnaddressed > 0;
   const openThis = () => { markSeen(en.path, en.currentHash); openSheet(ctx, en.source, en.file, en); };
   let expanded = false;
   const groupBox = h('div', 'sheet-entry-groups');
   groupBox.hidden = true;
+  const rdsBox = h('div', 'sheet-entry-rds');
+  rdsBox.hidden = true;
+  let rdsLoaded = false;
   if (groups.length) {
     const caret = h('button', 'entry-caret', '▸');
     caret.onclick = (e) => { e.stopPropagation(); expanded = !expanded; caret.textContent = expanded ? '▾' : '▸'; groupBox.hidden = !expanded; };
+    row.appendChild(caret);
+  } else if (hasRds) {
+    const caret = h('button', 'entry-caret', '▸');
+    caret.onclick = (e) => {
+      e.stopPropagation();
+      expanded = !expanded; caret.textContent = expanded ? '▾' : '▸'; rdsBox.hidden = !expanded;
+      if (expanded && !rdsLoaded) { rdsLoaded = true; loadRdsUnaddressed(ctx, en, rdsBox); }
+    };
     row.appendChild(caret);
   } else {
     row.appendChild(h('span', 'entry-caret-spacer', ''));
@@ -214,6 +235,8 @@ function sheetEntryRow(ctx, en) {
   if (en.stage) sub.appendChild(h('span', 'entry-stage', en.stage));
   if (groups.length) sub.appendChild(h('span', 'entry-groupsum' + (en.docApproved ? ' is-done' : ''),
     (en.docApproved ? '✓ ' : '') + 'グループ' + groups.filter((g) => g.approved).length + '/' + groups.length));
+  // RDSナビ（§4）: 💬未対応数（=内容ありで↳応答が無い件数の機械count）。
+  if (isRds) sub.appendChild(rdsUnaddressedBadge(en.rdsUnaddressed));
   if (en.updated) sub.appendChild(h('span', 'entry-updated', en.updated));
   mid.appendChild(sub);
   mid.onclick = openThis;
@@ -229,7 +252,38 @@ function sheetEntryRow(ctx, en) {
     groupBox.appendChild(gr);
   });
   wrap.appendChild(groupBox);
+  wrap.appendChild(rdsBox);
   return wrap;
+}
+
+function rdsUnaddressedBadge(n) {
+  const b = h('span', 'rds-unaddr-badge' + (n > 0 ? ' has-unaddr' : ' is-clear'), n > 0 ? '💬未対応 ' + n : '💬未対応 0');
+  return b;
+}
+
+// RDS未対応💬の一覧を取得し、該当箇所へのジャンプボタンとして描画（§4・アンカー遷移）。
+async function loadRdsUnaddressed(ctx, en, box) {
+  box.innerHTML = '';
+  box.appendChild(h('p', 'view-hint', '読み込み中…'));
+  try {
+    const data = await ctx.program.loadRdsComments(en.file);
+    box.innerHTML = '';
+    const list = data.unaddressed || [];
+    if (!list.length) { box.appendChild(h('p', 'view-hint', '未対応の💬はありません。')); return; }
+    list.forEach((u) => {
+      const b = h('button', 'rds-unaddr-row');
+      const head = h('div', 'rds-unaddr-head');
+      if (u.reqId) head.appendChild(h('span', 'rds-unaddr-req', u.reqId));
+      head.appendChild(h('span', 'rds-unaddr-jump', '該当箇所へ →'));
+      b.appendChild(head);
+      b.appendChild(h('div', 'rds-unaddr-snippet', '💬 ' + (u.snippet || '')));
+      b.onclick = () => { markSeen(en.path, en.currentHash); openSheet(ctx, en.source, en.file, en, u.blockIndex); };
+      box.appendChild(b);
+    });
+  } catch (e) {
+    box.innerHTML = '';
+    box.appendChild(h('p', 'view-hint', '未対応💬の取得に失敗: ' + (e.message || e)));
+  }
 }
 
 function backToList() {
@@ -237,7 +291,7 @@ function backToList() {
   listPane.hidden = false;
 }
 
-async function openSheet(ctx, source, file, entry) {
+async function openSheet(ctx, source, file, entry, jumpBlockIndex) {
   currentEntry = entry || null;
   listPane.hidden = true;
   detailPane.hidden = false;
@@ -247,9 +301,20 @@ async function openSheet(ctx, source, file, entry) {
   try {
     const payload = await ctx.program.readSheet(source, file);
     renderSheet(ctx, payload);
+    if (jumpBlockIndex != null && jumpBlockIndex >= 0) jumpToBlock(jumpBlockIndex);
   } catch (e) {
     bodyEl.textContent = '読み込みエラー: ' + (e.message || e);
   }
+}
+
+// RDSナビ（§4）: 未対応💬の該当ブロックへスクロール＋一時ハイライト（アンカー遷移）。
+function jumpToBlock(blockIndex) {
+  const target = bodyEl.querySelector('[data-block-index="' + blockIndex + '"]');
+  if (!target) return;
+  if (target.tagName === 'DETAILS') target.open = true;
+  target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  target.classList.add('sheet-block-jumped');
+  setTimeout(() => target.classList.remove('sheet-block-jumped'), 2400);
 }
 
 // ヘッダの状態チップ＋承認集計（§2-3・承認ボタン概念は撤去＝チェックの純粋導出）。
@@ -464,6 +529,7 @@ function renderTestReport(payload) {
 function renderComposedCase(ctx, payload, block) {
   const cf = block.caseFields || {};
   const container = h('div', 'sheet-block sheet-case' + (cf.checked ? ' is-checked' : ''));
+  container.setAttribute('data-block-index', block.index); // RDS/シート内ジャンプのアンカー（§4）
   const headerLine = (block.raw || '').split('\n')[0];
   const m = /^- \[([ xX])\] ?(.*)$/.exec(headerLine);
   const checked = m ? m[1].toLowerCase() === 'x' : !!cf.checked;
@@ -604,6 +670,7 @@ function renderBlock(ctx, payload, block, group) {
   if (block.kind === 'case' && block.caseFields) return renderComposedCase(ctx, payload, block);
   // 批評ブロックは折りたたみ（details・解釈=見出しに「批評」を含むセクション）。
   const container = block.collapse ? h('details', 'sheet-block sheet-block-collapse') : h('div', 'sheet-block');
+  container.setAttribute('data-block-index', block.index); // RDS/シート内ジャンプのアンカー（§4）
   if (block.collapse) {
     container.appendChild(h('summary', 'sheet-block-summary', block.heading || '（批評）'));
   } else if (block.kind === 'heading') {

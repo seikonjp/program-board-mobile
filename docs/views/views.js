@@ -27,6 +27,10 @@ let libListPane, libDetailPane, libAxesWrap, libTitle, libSearch, libBody;
 let libraryAxes = [];
 let libraryCurrent = null;
 let mode = 'progress';
+// Library原典（§4・便4）
+let originsPane, origListPane, origDetailPane, origBoardWrap, origTitle, origSearch, origBody;
+let originsBoard = null;
+let originsCurrent = null;
 
 function stageBase(stage) {
   if (!stage) return '（段階なし）';
@@ -39,11 +43,14 @@ function create(ctx) {
   subtabsEl = h('div', 'views-subtabs');
   const pTab = h('button', 'subtab is-active', 'Progress');
   const lTab = h('button', 'subtab', 'Library');
+  const oTab = h('button', 'subtab', 'Library原典');
   pTab.onclick = () => switchMode(ctx, 'progress');
   lTab.onclick = () => switchMode(ctx, 'library');
-  subtabsEl._pTab = pTab; subtabsEl._lTab = lTab;
+  oTab.onclick = () => switchMode(ctx, 'origins');
+  subtabsEl._pTab = pTab; subtabsEl._lTab = lTab; subtabsEl._oTab = oTab;
   subtabsEl.appendChild(pTab);
   subtabsEl.appendChild(lTab);
+  subtabsEl.appendChild(oTab);
   root.appendChild(subtabsEl);
 
   // ---- 進捗ペイン ----
@@ -101,22 +108,54 @@ function create(ctx) {
   libraryPane.appendChild(libDetailPane);
   root.appendChild(libraryPane);
 
+  // ---- Library原典ペイン（§4・便4）: Sheet原典を俯瞰・状態=新着アイコンのみ ----
+  originsPane = h('div', 'library-pane-root');
+  originsPane.hidden = true;
+  origListPane = h('div', 'library-list-pane');
+  origListPane.appendChild(h('p', 'view-hint', 'Sheetの原典（変換前の正本）を読み取り表示（編集はしません）。状態は「変更から一定期間の新着（🆕）」のみ。実パス未特定は「未整備（原典未特定）」と正直に表示します。'));
+  origBoardWrap = h('div', 'origins-board');
+  origBoardWrap.textContent = '読み込み中…';
+  origListPane.appendChild(origBoardWrap);
+  originsPane.appendChild(origListPane);
+
+  origDetailPane = h('div', 'library-detail-pane');
+  origDetailPane.hidden = true;
+  const ohead = h('div', 'library-detail-head');
+  const oback = h('button', 'btn-secondary', '← 一覧へ');
+  oback.onclick = () => { origDetailPane.hidden = true; origListPane.hidden = false; };
+  origTitle = h('span', 'library-title');
+  origSearch = h('input', 'field library-search');
+  origSearch.type = 'search'; origSearch.placeholder = 'この原典内を検索';
+  origSearch.oninput = () => { if (originsCurrent) renderOriginFile(originsCurrent); };
+  ohead.appendChild(oback);
+  ohead.appendChild(origTitle);
+  ohead.appendChild(origSearch);
+  origDetailPane.appendChild(ohead);
+  origBody = h('div', 'library-body');
+  origDetailPane.appendChild(origBody);
+  originsPane.appendChild(origDetailPane);
+  root.appendChild(originsPane);
+
   return root;
 }
 
 function onShow(ctx) {
   if (mode === 'progress' && !progressData) loadProgress(ctx);
   if (mode === 'library' && !libraryAxes.length) loadLibrary(ctx);
+  if (mode === 'origins' && !originsBoard) loadLibraryOrigins(ctx);
 }
 
 function switchMode(ctx, m) {
   mode = m;
   subtabsEl._pTab.classList.toggle('is-active', m === 'progress');
   subtabsEl._lTab.classList.toggle('is-active', m === 'library');
+  subtabsEl._oTab.classList.toggle('is-active', m === 'origins');
   progressPane.hidden = (m !== 'progress');
   libraryPane.hidden = (m !== 'library');
+  originsPane.hidden = (m !== 'origins');
   if (m === 'progress' && !progressData) loadProgress(ctx);
   if (m === 'library' && !libraryAxes.length) loadLibrary(ctx);
+  if (m === 'origins' && !originsBoard) loadLibraryOrigins(ctx);
 }
 
 // ---- View行コメント → consultカード（3-4） ----
@@ -399,6 +438,87 @@ function renderLibraryItem(ctx, payload) {
   });
   if (!toc.children.length) toc.appendChild(h('p', 'view-hint', q ? '該当する見出しはありません。' : '（見出しがありません）'));
   libBody.appendChild(toc);
+}
+
+// ---- Library原典（§4・便4）: Sheet原典をSheetと同方式で俯瞰・状態=新着アイコンのみ ----
+const ORIGIN_STATE_ICON = { new: '🆕', reviewing: '◐', done: '✓', reapprove: '↺' };
+
+async function loadLibraryOrigins(ctx) {
+  if (!ctx.program || !ctx.program.loadLibraryOrigins) return;
+  origBoardWrap.textContent = '読み込み中…';
+  try {
+    originsBoard = await ctx.program.loadLibraryOrigins();
+    renderLibraryOrigins(ctx);
+  } catch (e) {
+    origBoardWrap.innerHTML = '';
+    origBoardWrap.appendChild(h('p', 'view-hint', 'Library原典の読み込みに失敗: ' + (e.message || e)));
+  }
+}
+
+function renderLibraryOrigins(ctx) {
+  origBoardWrap.innerHTML = '';
+  const board = originsBoard;
+  if (!board || !(board.tags || []).length) { origBoardWrap.appendChild(h('p', 'view-hint', '（原典がありません）')); return; }
+  (board.tags || []).forEach((tag) => {
+    const tagBox = h('div', 'origins-tag');
+    tagBox.appendChild(h('div', 'origins-tag-head', tag.label));
+    (tag.subcategories || []).forEach((sc) => {
+      const scBox = h('div', 'origins-sub');
+      scBox.appendChild(h('div', 'origins-sub-head', sc.label));
+      (sc.origins || []).forEach((o) => {
+        const oBox = h('div', 'origins-origin');
+        const oh = h('div', 'origins-origin-head');
+        oh.appendChild(h('span', 'origins-origin-label', o.label));
+        if (!o.available) oh.appendChild(h('span', 'origins-unmapped', o.reason || '未整備（原典未特定）'));
+        else oh.appendChild(h('span', 'origins-count', String((o.entries || []).length)));
+        oBox.appendChild(oh);
+        (o.entries || []).forEach((en) => {
+          const row = h('button', 'origins-entry');
+          const st = h('span', 'doc-state' + (en.state ? ' st-' + en.state : ''));
+          st.textContent = en.state ? (ORIGIN_STATE_ICON[en.state] || '') : '';
+          row.appendChild(st);
+          const mid = h('div', 'origins-entry-mid');
+          mid.appendChild(h('div', 'origins-entry-name', en.name));
+          const sub = h('div', 'origins-entry-sub');
+          if (en.dir && en.dir !== '.') sub.appendChild(h('span', 'origins-entry-dir', en.dir));
+          if (en.updated) sub.appendChild(h('span', 'origins-entry-updated', en.updated));
+          mid.appendChild(sub);
+          row.appendChild(mid);
+          row.onclick = () => openOriginFile(ctx, en.file);
+          oBox.appendChild(row);
+        });
+        scBox.appendChild(oBox);
+      });
+      tagBox.appendChild(scBox);
+    });
+    origBoardWrap.appendChild(tagBox);
+  });
+}
+
+async function openOriginFile(ctx, sub) {
+  origListPane.hidden = true;
+  origDetailPane.hidden = false;
+  origTitle.textContent = sub;
+  origSearch.value = '';
+  origBody.textContent = '読み込み中…';
+  try {
+    const payload = await ctx.program.readOriginFile(sub);
+    originsCurrent = payload;
+    origTitle.textContent = payload.name + '（' + payload.type + '・読み取り専用）';
+    renderOriginFile(payload);
+  } catch (e) {
+    origBody.textContent = '読み込みエラー: ' + (e.message || e);
+  }
+}
+
+// 原典の閲覧（読み取り専用・コメント口なし＝原典への書き込みは一切しない・§4）。
+function renderOriginFile(payload) {
+  origBody.innerHTML = '';
+  const q = (origSearch.value || '').trim().toLowerCase();
+  const src = (payload.type === 'json') ? (payload.parsedOk ? payload.pretty : payload.text) : (payload.text || '');
+  const lines = String(src).split('\n');
+  const shown = q ? lines.filter((l) => l.toLowerCase().includes(q)) : lines;
+  origBody.appendChild(h('pre', 'library-pre', shown.join('\n')));
 }
 
 // progressRow は ctx を引数に取らないため、onShow/create 時の ctx を保持して使う。
