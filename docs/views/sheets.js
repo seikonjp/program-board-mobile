@@ -7,23 +7,41 @@
 
 import { registerView } from '../registry.js';
 import { h, openCardDetail } from './shared.js';
-import { deriveDocState, DOC_STATE_ICON, buildInbox, cardNeedsUserAction, typeLabel, statusLabel, parseMarkdownTables } from '../parser.js';
+import { deriveDocState, DOC_STATE_ICON, buildInbox, cardNeedsUserAction, typeLabel, statusLabel, parseMarkdownTables,
+  mergeViewStateStores, INBOX_TYPE_CHIPS, filterInboxRowsByType, subtagChips } from '../parser.js';
 
 const SHEET_STATE_LABEL = { draft: '起草中', reviewed: '批評済', approved: '承認済' };
 
 let root, listPane, detailPane, sourcesWrap, titleEl, metaEl, bodyEl;
 let board = null;          // loadSheetBoard の結果（3画面タグ＋共通列・便1）
 let activeTag = 'inbox';   // 既定ビュー=統合インボックス（§1-2c）
+let activeSubtag = {};     // タグ別サブタグチップ選択（便6・§5b-2）
+let inboxType = 'all';     // 統合インボックス 種別チップ選択（便6・§5b-2）
 let currentEntry = null;   // 開いているシートの board エントリ（確認型の読了マーク用）
 let loadedOnce = false;
+let programRef = null;     // 共有ストア書き込み用の program 参照（便6・§5b-1）
 
-// 開封・読了の記録＝端末 localStorage（正本へ書かない・§1-1a）。
+// 開封・読了の記録（§1-1a）。便6（§5b-1）: 共有ストア Program/data/view_state.json（Dropbox）を正とし、
+//   localStorage はオフライン時のフォールバックキャッシュへ格下げ。文書ごと ts の最終更新優先マージ。
 const SHEET_OPEN_KEY = 'pbm_sheet_open_v1';
 function readOpenRecords() { try { return JSON.parse(localStorage.getItem(SHEET_OPEN_KEY) || '{}') || {}; } catch { return {}; } }
 function writeOpenRecords(m) { try { localStorage.setItem(SHEET_OPEN_KEY, JSON.stringify(m)); } catch { /* quota */ } }
 function openRecordFor(k) { return readOpenRecords()[k] || null; }
-function markSeen(k, hash) { const m = readOpenRecords(); const r = m[k] || {}; r.seenHash = hash; m[k] = r; writeOpenRecords(m); }
-function markDone(k, hash) { const m = readOpenRecords(); const r = m[k] || {}; r.doneHash = hash; r.seenHash = hash; m[k] = r; writeOpenRecords(m); }
+function markSeen(k, hash) { const m = readOpenRecords(); const r = m[k] || {}; r.seenHash = hash; r.ts = Date.now(); m[k] = r; writeOpenRecords(m); pushViewState(k, r); }
+function markDone(k, hash) { const m = readOpenRecords(); const r = m[k] || {}; r.doneHash = hash; r.seenHash = hash; r.ts = Date.now(); m[k] = r; writeOpenRecords(m); pushViewState(k, r); }
+// 1文書の記録を共有ストアへ反映（best-effort・オフライン時は localStorage のまま）。
+function pushViewState(k, rec) {
+  if (!programRef || !programRef.saveViewStateRecord) return;
+  try { const p = programRef.saveViewStateRecord(k, { seenHash: rec.seenHash != null ? rec.seenHash : null, doneHash: rec.doneHash != null ? rec.doneHash : null, ts: rec.ts || Date.now() }); if (p && p.catch) p.catch(() => { /* オフライン */ }); }
+  catch { /* オフライン */ }
+}
+// 共有ストアを取り込み localStorage へマージ（読めた共有ストアを正・§5b-1）。オフライン時は既存キャッシュを使用。
+async function syncViewState(ctx) {
+  const prog = (ctx && ctx.program) || programRef;
+  if (!prog || !prog.loadViewState) return;
+  try { const shared = await prog.loadViewState(); writeOpenRecords(mergeViewStateStores(readOpenRecords(), shared || {})); }
+  catch { /* オフライン: 既存 localStorage を使用 */ }
+}
 function stateKindFor(dk) { return dk === 'approval' ? 'approval' : (dk === 'confirm' ? 'confirm' : 'general'); }
 function entryDocState(en) {
   if (en.docKind === 'approval' && en.checkboxTotal > 0 && en.checkboxChecked === en.checkboxTotal) {
@@ -66,9 +84,11 @@ function onShow(ctx) { if (!loadedOnce) load(ctx); }
 
 async function load(ctx) {
   if (!ctx.program || !ctx.program.loadSheetBoard) return;
+  programRef = ctx.program; // 便6: 共有ストア書き込み用
   sourcesWrap.innerHTML = '';
   sourcesWrap.appendChild(h('p', 'view-hint', '読み込み中…'));
   try {
+    await syncViewState(ctx); // 便6: 共有ストア（開封/読了）を先に取り込む（読めた方を正）
     board = await ctx.program.loadSheetBoard();
     loadedOnce = true;
     renderBoard(ctx);
@@ -94,7 +114,7 @@ function legendDetails() {
   ul.appendChild(h('div', '', '解除→N＝承認すると動ける作業単位数（概算）'));
   ul.appendChild(h('div', '', '状態語彙7値: 実装済み／実装可（未着手）／追加実装が必要／他機能の実装待ち（〇〇）／実装中／テスト一部成功・停止中（n/m）／デバッグ中／不明'));
   ul.appendChild(h('div', '', '実装可否マーカー: 🟢実装可 🟡同時実装 🔴他機能の実装待ち（見出し直下） ／ グループ承認＝グループ内全ケース[x]で自動成立'));
-  ul.appendChild(h('div', '', '開発フロー: D-1シナリオ（承認）／D-2動作定義（確認・単位=動作・由来=CASE参照）／D-3完成定義（承認・テスト計画=計画数⇄定義済みの機械照合）／D-4テスト報告（確認）'));
+  ul.appendChild(h('div', '', '開発フロー: シナリオ（承認）／動作定義（確認・単位=動作・由来=CASE参照）／完成定義（承認・テスト計画=計画数⇄定義済みの機械照合）／テスト報告（確認）'));
   ul.appendChild(h('div', '', 'テスト種類語彙（表示のみ）: 全数／煙／回帰／影響／凍結 ＋境界難所フラグ ／ テスト報告の失敗＝🔎発見（恥でなく成果）'));
   d.appendChild(ul);
   return d;
@@ -115,6 +135,17 @@ function renderBoard(ctx) {
   else renderTag(ctx, activeTag);
 }
 
+// サブタグチップ（便6・§5b-2）。統合インボックスは種別チップ、開発フロー/設計基盤はサブカテゴリチップ。
+function renderSubtagChips(chips, activeId, onPick) {
+  const nav = h('div', 'sheet-subtagnav');
+  chips.forEach((c) => {
+    const b = h('button', 'sheet-subtag-btn' + (activeId === c.id ? ' is-active' : ''), c.label);
+    b.onclick = () => onPick(c.id);
+    nav.appendChild(b);
+  });
+  sourcesWrap.appendChild(nav);
+}
+
 // 統合インボックス（§1-2c）: 未処理Sheet＋要ユーザーアクションカードを解除インパクト降順で一列。タップ直行。
 function renderInbox(ctx) {
   sourcesWrap.appendChild(h('p', 'view-hint', 'あなたの承認・確認待ち（未処理Sheet＋応答待ちカード）。解除インパクト降順。タップで直行。'));
@@ -126,8 +157,10 @@ function renderInbox(ctx) {
     return { ...en, unresolved };
   });
   const cards = (ctx.state.cards || []).map((c) => ({ ...c, impact: 0 }));
-  const rows = buildInbox(sheetItems, cards);
-  if (!rows.length) { sourcesWrap.appendChild(h('p', 'view-hint', '（未処理はありません）')); return; }
+  const allRows = buildInbox(sheetItems, cards);
+  renderSubtagChips(INBOX_TYPE_CHIPS, inboxType, (id) => { inboxType = id; renderBoard(ctx); });
+  const rows = filterInboxRowsByType(allRows, inboxType);
+  if (!rows.length) { sourcesWrap.appendChild(h('p', 'view-hint', '（該当なし）')); return; }
   const list = h('div', 'inbox-list');
   rows.forEach((r) => list.appendChild(r.kind === 'sheet' ? inboxSheetRow(ctx, r) : inboxCardRow(ctx, r)));
   sourcesWrap.appendChild(list);
@@ -147,7 +180,7 @@ function inboxSheetRow(ctx, r) {
   row.appendChild(stateIcon(en));
   row.appendChild(kindBadge(en.docKind));
   const mid = h('div', 'inbox-mid');
-  mid.appendChild(h('div', 'inbox-title', (en.flow ? '[' + en.flow + '] ' : '') + en.title));
+  mid.appendChild(h('div', 'inbox-title', en.title)); // 便6（§5b-3）: 記号接頭辞 [D-1] 等は出さない（種別は kindBadge/チップで表示）
   if (en.summary) { const s = h('div', 'inbox-summary', en.summary); if (en.stale) s.appendChild(h('span', 'stale-badge', 'stale')); mid.appendChild(s); }
   row.appendChild(mid);
   row.appendChild(impactBadge(en.impact));
@@ -172,7 +205,10 @@ function renderTag(ctx, tagId) {
   const tag = ((board && board.tags) || []).find((t) => t.id === tagId);
   if (!tag) { sourcesWrap.appendChild(h('p', 'view-hint', '（該当なし）')); return; }
   if (tag.pending) { sourcesWrap.appendChild(h('p', 'view-hint', '準備中。')); return; }
-  (tag.subcategories || []).forEach((sc) => {
+  // サブタグチップ（便6・§5b-2）: すべて＋各サブカテゴリ（平易名）で絞り込み。
+  const activeSub = activeSubtag[tagId] || 'all';
+  renderSubtagChips(subtagChips(tag), activeSub, (id) => { activeSubtag[tagId] = id; renderBoard(ctx); });
+  (tag.subcategories || []).filter((sc) => activeSub === 'all' || sc.id === activeSub).forEach((sc) => {
     const group = h('div', 'sheet-source' + (sc.pending ? ' sheet-source-pending' : ''));
     const head = h('div', 'sheet-source-head');
     head.appendChild(h('span', 'sheet-source-label', sc.label));

@@ -77,22 +77,23 @@ export const config = {
   // 3画面タグ（§1-2a）。設計基盤は便4でB-1〜B-6枠を作成＝便1はタグのみ・準備中表示。
   sheetTags: [
     { id: 'flow', label: '開発フロー', pending: false, subcategories: [
-      { id: 'scenario', label: 'D-1シナリオ', flow: 'D-1', kind: 'approval', source: 'scenario' },
-      { id: 'behaviors', label: 'D-2動作定義', flow: 'D-2', kind: 'confirm', source: 'behaviors' },
-      { id: 'completion', label: 'D-3完成定義', flow: 'D-3', kind: 'approval', source: 'completion' },
-      { id: 'testreport', label: 'D-4テスト報告', flow: 'D-4', kind: 'confirm', source: 'testreport' },
+      // 便6（§5b-3）: 表示ラベルは平易名のみ（内部キー id / flow の記号は維持）。
+      { id: 'scenario', label: 'シナリオ', flow: 'D-1', kind: 'approval', source: 'scenario' },
+      { id: 'behaviors', label: '動作定義', flow: 'D-2', kind: 'confirm', source: 'behaviors' },
+      { id: 'completion', label: '完成定義', flow: 'D-3', kind: 'approval', source: 'completion' },
+      { id: 'testreport', label: 'テスト報告', flow: 'D-4', kind: 'confirm', source: 'testreport' },
     ] },
     // 設計基盤（§4・便4）: B-1〜B-6の枠（画面枠）のみ。各サブカテゴリ pending=準備中（個別加工表示は後日ひとつずつ確定）。
     { id: 'foundation', label: '設計基盤', pending: false, subcategories: [
-      { id: 'B-1', label: 'B-1 コム・種体系', pending: true },
-      { id: 'B-2', label: 'B-2 設定項目', pending: true },
-      { id: 'B-3', label: 'B-3 設計条件', pending: true },
-      { id: 'B-4', label: 'B-4 品質基準', pending: true },
-      { id: 'B-5', label: 'B-5 操作', pending: true },
-      { id: 'B-6', label: 'B-6 画面', pending: true },
+      { id: 'B-1', label: 'コム・種体系', pending: true },
+      { id: 'B-2', label: '設定項目', pending: true },
+      { id: 'B-3', label: '設計条件', pending: true },
+      { id: 'B-4', label: '品質基準', pending: true },
+      { id: 'B-5', label: '操作', pending: true },
+      { id: 'B-6', label: '画面', pending: true },
     ] },
     { id: 'rds', label: 'RDS', pending: false, subcategories: [
-      { id: 'rds', label: 'R-1 RDS文書', flow: null, kind: 'confirm', source: 'rds' },
+      { id: 'rds', label: 'RDS文書', flow: null, kind: 'confirm', source: 'rds' },
     ] },
   ],
 
@@ -103,29 +104,30 @@ export const config = {
   libraryNewBadgeDays: 7,
   libraryOriginTags: [
     { id: 'flow', label: '開発フロー', subcategories: [
-      { id: 'D-1', label: 'D-1 シナリオ', origins: [ { label: 'Scenarios（SC-J/F/C・SC_MAP）', kind: 'dir', sub: 'Docs/ConOps/Scenarios', match: '\\.md$', exclude: '^_' } ] },
-      { id: 'D-2', label: 'D-2 動作定義', origins: [ { label: 'BD文書', kind: 'dir', sub: 'Docs/ConOps/Behaviors', match: '\\.md$', exclude: '^_' } ] },
-      { id: 'D-3', label: 'D-3 完成定義', origins: [ { label: 'TestDefinitions・QS→テスト対応表', kind: 'dir', sub: 'archplan-core/Docs/TestDefinitions', match: '\\.md$', exclude: '^_' } ] },
-      { id: 'D-4', label: 'D-4 テスト報告', origins: [ { label: '報告文書＋提出物の実体', kind: 'dir', sub: 'archplan-core/Docs/TestReports', match: '\\.md$', exclude: '^_' } ] },
+      // 便6（§5b-3）: 表示ラベルは平易名のみ（内部キー id の記号は維持）。
+      { id: 'D-1', label: 'シナリオ', origins: [ { label: 'Scenarios（SC-J/F/C・SC_MAP）', kind: 'dir', sub: 'Docs/ConOps/Scenarios', match: '\\.md$', exclude: '^_' } ] },
+      { id: 'D-2', label: '動作定義', origins: [ { label: 'BD文書', kind: 'dir', sub: 'Docs/ConOps/Behaviors', match: '\\.md$', exclude: '^_' } ] },
+      { id: 'D-3', label: '完成定義', origins: [ { label: 'TestDefinitions・QS→テスト対応表', kind: 'dir', sub: 'archplan-core/Docs/TestDefinitions', match: '\\.md$', exclude: '^_' } ] },
+      { id: 'D-4', label: 'テスト報告', origins: [ { label: '報告文書＋提出物の実体', kind: 'dir', sub: 'archplan-core/Docs/TestReports', match: '\\.md$', exclude: '^_' } ] },
     ] },
     { id: 'foundation', label: '設計基盤', subcategories: [
-      { id: 'B-1', label: 'B-1 コム・種体系', origins: [
+      { id: 'B-1', label: 'コム・種体系', origins: [
         { label: 'SPECIES_LIST', kind: 'file', sub: 'Projects/DataStructure/Works/W3_定義作成/SPECIES_LIST.md' },
         { label: '種スキーマ G01〜G14', kind: 'dir', sub: 'Projects/DataStructure/Works/W3_定義作成', match: '^G\\d+_SCHEMA\\.md$' } ] },
-      { id: 'B-2', label: 'B-2 設定項目', origins: [ { label: 'settingData定義・実行時代入census', kind: 'unknown' } ] },
-      { id: 'B-3', label: 'B-3 設計条件', origins: [
+      { id: 'B-2', label: '設定項目', origins: [ { label: 'settingData定義・実行時代入census', kind: 'unknown' } ] },
+      { id: 'B-3', label: '設計条件', origins: [
         { label: 'CONDITIONS_LIST', kind: 'file', sub: 'Projects/DataStructure/Works/W3_定義作成/CONDITIONS_LIST.md' },
         { label: 'ELEMENT_CATALOG', kind: 'file', sub: 'archplan-core/Docs/Conditions/ELEMENT_CATALOG.md' } ] },
-      { id: 'B-4', label: 'B-4 品質基準', origins: [
+      { id: 'B-4', label: '品質基準', origins: [
         { label: 'VALIDATION_RULES.json（正）', kind: 'file', sub: 'archplan-core/Docs/Quality/VALIDATION_RULES.json' },
         { label: 'VALIDATION_RULES.md（閲覧版）', kind: 'file', sub: 'archplan-core/Docs/Quality/VALIDATION_RULES.md' } ] },
-      { id: 'B-5', label: 'B-5 操作', origins: [ { label: 'OPERATION_ROUTING_TABLE（操作カタログ成果）', kind: 'file', sub: 'Projects/OperationManagement/OPERATION_ROUTING_TABLE.md' } ] },
-      { id: 'B-6', label: 'B-6 画面', origins: [
+      { id: 'B-5', label: '操作', origins: [ { label: 'OPERATION_ROUTING_TABLE（操作カタログ成果）', kind: 'file', sub: 'Projects/OperationManagement/OPERATION_ROUTING_TABLE.md' } ] },
+      { id: 'B-6', label: '画面', origins: [
         { label: 'SCREEN_FRAMEWORK', kind: 'file', sub: 'Docs/UI/SCREEN_FRAMEWORK.md' },
         { label: 'SCREEN_LIST（画面一覧）', kind: 'file', sub: 'Projects/ScreenManagement/SCREEN_LIST.md' } ] },
     ] },
     { id: 'rds', label: 'RDS', subcategories: [
-      { id: 'R-1', label: 'R-1 RDS', origins: [
+      { id: 'R-1', label: 'RDS', origins: [
         { label: 'RDS文書・RDS_INDEX', kind: 'dir', sub: 'Projects/RequirementManagement/Works/RDS', match: '^RDS_.*\\.md$' },
         { label: 'REQUIREMENT_MAP', kind: 'file', sub: 'Docs/Requirements/REQUIREMENT_MAP.md' } ] },
     ] },
@@ -133,6 +135,9 @@ export const config = {
 
   // summaries.json（AI補助キャッシュ・§1-1b）。アプリは生成しない（器のみ）。sheetArchplanRoot 相対。未存在→{}。
   summariesSub: 'Program/data/summaries.json',
+  // 開封/読了 共有ストア（便6・§5b-1）: PC⇄モバイル同期。sheetArchplanRoot 相対。未存在→{}（無事故）。
+  // 値={seenHash,doneHash,ts}・文書ごと最終更新優先。書き込みはユーザーアクション由来（開封・読了）のみ。
+  viewStateSub: 'Program/data/view_state.json',
 
   // Views 進捗ソース（config化・sheetArchplanRoot 相対・アダプタ型で正規化・v2.3）。
   // 差し替え（初版census→合流後FEATURE_LIST）は sub+type の変更のみ。

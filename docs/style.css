@@ -693,6 +693,10 @@ textarea.sheet-comment-input { flex: 1; min-height: 40px; resize: none; }
 .sheet-tagnav { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
 .sheet-tag-btn { background: var(--panel, #fff); border: 1px solid var(--line, #ccc); border-radius: 16px; padding: 5px 12px; font-size: 13px; }
 .sheet-tag-btn.is-active { background: var(--accent, #1d4ed8); color: #fff; border-color: var(--accent, #1d4ed8); }
+/* 便6（§5b-2）: サブタグチップ（第2階層の絞り込み・タグナビより控えめ） */
+.sheet-subtagnav { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 10px; }
+.sheet-subtag-btn { background: var(--panel, #fff); border: 1px solid var(--line, #ddd); border-radius: 14px; padding: 4px 10px; font-size: 12px; color: var(--muted, #55606e); }
+.sheet-subtag-btn.is-active { background: #eef2fb; color: var(--accent, #1d4ed8); border-color: var(--accent, #1d4ed8); font-weight: 600; }
 
 .inbox-list, .sheet-entry-list { display: flex; flex-direction: column; gap: 5px; }
 .inbox-row, .sheet-entry { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; background: var(--panel, #fff); border: 1px solid var(--line, #e5e7eb); border-radius: 8px; padding: 9px 10px; }

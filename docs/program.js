@@ -771,6 +771,24 @@ export function createProgram(dropbox, config) {
     catch { return {}; }
   }
 
+  // 開封/読了の共有ストア（便6・§5b-1）: PC⇄モバイル同期。Program/data/view_state.json。未存在→{}（無事故）。
+  async function loadViewState() {
+    if (!config.viewStateSub) return {};
+    try { const { text } = await dropbox.download(join(archplanRoot, config.viewStateSub)); return JSON.parse(text) || {}; }
+    catch { return {}; }
+  }
+  // 1文書ぶんの記録を最終更新優先でマージして書く（未存在なら作成・競合はリトライで再マージ）。
+  //   ユーザーアクション由来（開封・読了）のみ。正本文書には書かない。
+  async function saveViewStateRecord(key, rec) {
+    if (!config.viewStateSub || !key || !rec) return null;
+    const dpath = join(archplanRoot, config.viewStateSub);
+    return dropbox.updateTextFileWithRetry(dpath, (current) => {
+      let store = {};
+      try { store = JSON.parse(current) || {}; } catch { store = {}; }
+      return JSON.stringify(P.mergeViewStateRecord(store, key, rec), null, 2) + '\n';
+    }, { createIfMissing: true });
+  }
+
   // 1ソースのファイル一覧＋更新時刻（server_modified）。未存在は空一覧で無事故。
   async function listFilesForSource(source) {
     const base = sheetBase(source);
@@ -923,6 +941,8 @@ export function createProgram(dropbox, config) {
     loadCards,
     loadSheetBoard,
     loadSummaries,
+    loadViewState,
+    saveViewStateRecord,
     listSessions,
     readSession,
     listSheets,

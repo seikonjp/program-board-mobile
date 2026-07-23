@@ -2436,3 +2436,83 @@ test('㊺(便5) program.loadProgressBoard: Dropbox読取り経路・source状況
   assert.strictEqual(empty.sources.registry, false);
   assert.strictEqual(empty.ok, false, 'registry無し=縮退ok:false（偽装しない）');
 });
+
+// 便6（§5b-1）: 開封/読了 共有ストアのマージ純関数（文書ごと最終更新ts優先）
+test('（便6）mergeViewStateRecord / mergeViewStateStores: 最終更新優先・空耐性', () => {
+  const s1 = P.mergeViewStateRecord({}, 'a.md', { seenHash: 'h1', doneHash: null, ts: 100 });
+  assert.deepStrictEqual(s1['a.md'], { seenHash: 'h1', doneHash: null, ts: 100 });
+  const s2 = P.mergeViewStateRecord(s1, 'a.md', { seenHash: 'hOLD', doneHash: null, ts: 50 });
+  assert.strictEqual(s2['a.md'].seenHash, 'h1', '古い更新は棄却');
+  const s3 = P.mergeViewStateRecord(s2, 'a.md', { seenHash: 'h2', doneHash: 'h2', ts: 200 });
+  assert.deepStrictEqual(s3['a.md'], { seenHash: 'h2', doneHash: 'h2', ts: 200 });
+  assert.deepStrictEqual(P.mergeViewStateRecord(s3, '', { ts: 1 }), s3, 'key欠損は無事故');
+  assert.deepStrictEqual(P.mergeViewStateRecord(s3, 'a.md', null), s3, 'rec欠損は無事故');
+  // 2ストア統合
+  const local = { 'a.md': { seenHash: 'a1', ts: 100 }, 'b.md': { seenHash: 'b1', ts: 300 } };
+  const shared = { 'a.md': { seenHash: 'a2', ts: 200 }, 'b.md': { seenHash: 'bOLD', ts: 150 }, 'c.md': { seenHash: 'c1', ts: 10 } };
+  const merged = P.mergeViewStateStores(local, shared);
+  assert.strictEqual(merged['a.md'].seenHash, 'a2', 'shared新→採用');
+  assert.strictEqual(merged['b.md'].seenHash, 'b1', 'local新→保持');
+  assert.strictEqual(merged['c.md'].seenHash, 'c1', 'shared のみ→追加');
+  assert.deepStrictEqual(P.mergeViewStateStores(null, null), {}, 'null耐性');
+});
+
+// 便6（§5b-1）: program.loadViewState / saveViewStateRecord（Dropbox経路・作成＋マージ）
+test('（便6）program.loadViewState / saveViewStateRecord: 未存在作成＋最終更新優先マージ', async () => {
+  const VS = '/ArchPlan/Program/data/view_state.json';
+  const { program, store } = mockProgram({}, APP_CONFIG);
+  assert.deepStrictEqual(await program.loadViewState(), {}, '未存在→{}');
+  await program.saveViewStateRecord('a.md', { seenHash: 'h1', doneHash: null, ts: 100 });
+  assert.ok(store.has(VS), 'view_state.json を作成（createIfMissing）');
+  let vs = await program.loadViewState();
+  assert.strictEqual(vs['a.md'].seenHash, 'h1');
+  // 古い ts は書かれない・新しい ts は反映（Dropbox側でも最終更新優先マージ）
+  await program.saveViewStateRecord('a.md', { seenHash: 'hOLD', doneHash: null, ts: 50 });
+  vs = await program.loadViewState();
+  assert.strictEqual(vs['a.md'].seenHash, 'h1', '古い更新は棄却');
+  await program.saveViewStateRecord('a.md', { seenHash: 'h2', doneHash: 'h2', ts: 200 });
+  vs = await program.loadViewState();
+  assert.strictEqual(vs['a.md'].doneHash, 'h2', '新しい更新は反映');
+  // 別文書は独立に追加される
+  await program.saveViewStateRecord('b.md', { seenHash: 'b1', doneHash: null, ts: 10 });
+  vs = await program.loadViewState();
+  assert.deepStrictEqual(Object.keys(vs).sort(), ['a.md', 'b.md']);
+});
+
+// 便6（§5b-2）: 統合インボックス種別チップ／サブタグチップの純ロジック
+test('（便6）inboxRowType / filterInboxRowsByType / subtagChips', () => {
+  const rows = [
+    { kind: 'sheet', ref: { docKind: 'approval' } },
+    { kind: 'sheet', ref: { docKind: 'confirm' } },
+    { kind: 'sheet', ref: { docKind: 'display' } },
+    { kind: 'card', ref: { type: 'decision' } },
+    { kind: 'card', ref: { type: 'report' } },
+    { kind: 'card', ref: { type: 'review' } },
+    { kind: 'card', ref: { type: 'consult' } },
+  ];
+  assert.deepStrictEqual(rows.map(P.inboxRowType), ['approval', 'confirm', 'other', 'decision', 'inspection', 'inspection', 'other']);
+  assert.strictEqual(P.filterInboxRowsByType(rows, 'all').length, 7);
+  assert.strictEqual(P.filterInboxRowsByType(rows, 'inspection').length, 2, 'report+review=検収');
+  assert.strictEqual(P.filterInboxRowsByType(rows, 'decision').length, 1);
+  assert.deepStrictEqual(P.INBOX_TYPE_CHIPS.map((c) => c.id), ['all', 'approval', 'confirm', 'decision', 'inspection']);
+  const flow = APP_CONFIG.sheetTags.find((t) => t.id === 'flow');
+  const chips = P.subtagChips(flow);
+  assert.strictEqual(chips[0].id, 'all');
+  assert.deepStrictEqual(chips.slice(1).map((c) => c.label), ['シナリオ', '動作定義', '完成定義', 'テスト報告'], '平易名チップ');
+  assert.deepStrictEqual(P.subtagChips(null), [{ id: 'all', label: 'すべて' }], 'null耐性');
+});
+
+// 便6（§5b-3）: config 表示ラベルに内部記号接頭辞（D-1/B-1/R-1）が無い（idは維持）
+test('（便6）config ラベルに記号接頭辞なし（id維持）', () => {
+  const labels = [];
+  APP_CONFIG.sheetTags.forEach((t) => (t.subcategories || []).forEach((sc) => labels.push(sc.label)));
+  APP_CONFIG.libraryOriginTags.forEach((t) => (t.subcategories || []).forEach((sc) => labels.push(sc.label)));
+  labels.forEach((L) => assert.ok(!/^[DBR]-\d/.test(String(L).trim()), '記号接頭辞なし: ' + L));
+  const flow = APP_CONFIG.sheetTags.find((t) => t.id === 'flow');
+  assert.strictEqual(flow.subcategories[0].label, 'シナリオ');
+  assert.deepStrictEqual(flow.subcategories.map((s) => s.id), ['scenario', 'behaviors', 'completion', 'testreport'], 'id維持');
+  const found = APP_CONFIG.sheetTags.find((t) => t.id === 'foundation');
+  assert.deepStrictEqual(found.subcategories.map((s) => s.id), ['B-1', 'B-2', 'B-3', 'B-4', 'B-5', 'B-6'], 'id維持');
+  assert.strictEqual(APP_CONFIG.viewStateSub, 'Program/data/view_state.json', 'view_state 置き場');
+  assert.strictEqual(APP_CONFIG.summariesSub, 'Program/data/summaries.json', 'summaries 置き場統一');
+});

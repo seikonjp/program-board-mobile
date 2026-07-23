@@ -1865,6 +1865,56 @@ export function deriveDocState(entry, record, opts) {
   return (typeof days === 'number' && days <= newDays) ? 'new' : null;
 }
 
+// 開封/読了の共有ストア（便6・§5b-1）: PC⇄モバイル同期。値={seenHash,doneHash,ts}・文書ごと最終更新（ts）優先。
+// マージは純関数（Mac/モバイル同名・挙動互換）。ts が大きい方（同値は incoming）を採用。
+export function mergeViewStateRecord(store, key, rec) {
+  const s = (store && typeof store === 'object') ? store : {};
+  if (!key || !rec) return { ...s };
+  const cur = s[key];
+  if (!cur || (Number(rec.ts) || 0) >= (Number(cur.ts) || 0)) return { ...s, [key]: rec };
+  return { ...s };
+}
+export function mergeViewStateStores(base, incoming) {
+  const out = { ...((base && typeof base === 'object') ? base : {}) };
+  const inc = (incoming && typeof incoming === 'object') ? incoming : {};
+  for (const k of Object.keys(inc)) {
+    const cur = out[k];
+    const it = inc[k];
+    if (!cur || (Number(it && it.ts) || 0) >= (Number(cur.ts) || 0)) out[k] = it;
+  }
+  return out;
+}
+
+// 統合インボックス 種別チップ（便6・§5b-2）。承認/確認=Sheet種別、裁定=decisionカード、検収=report/reviewカード。
+export const INBOX_TYPE_CHIPS = [
+  { id: 'all', label: 'すべて' },
+  { id: 'approval', label: '承認' },
+  { id: 'confirm', label: '確認' },
+  { id: 'decision', label: '裁定' },
+  { id: 'inspection', label: '検収' },
+];
+export function inboxRowType(row) {
+  if (!row) return 'other';
+  if (row.kind === 'sheet') {
+    const dk = row.ref && row.ref.docKind;
+    return dk === 'approval' ? 'approval' : (dk === 'confirm' ? 'confirm' : 'other');
+  }
+  const t = normalizeType(row.ref && row.ref.type);
+  if (t === 'decision') return 'decision';
+  if (t === 'report' || t === 'review') return 'inspection';
+  return 'other';
+}
+export function filterInboxRowsByType(rows, typeId) {
+  if (!typeId || typeId === 'all') return rows || [];
+  return (rows || []).filter((r) => inboxRowType(r) === typeId);
+}
+// サブタグチップ（便6・§5b-2）: すべて＋各サブカテゴリ（平易名）。
+export function subtagChips(tag) {
+  const chips = [{ id: 'all', label: 'すべて' }];
+  ((tag && tag.subcategories) || []).forEach((sc) => chips.push({ id: sc.id, label: sc.label }));
+  return chips;
+}
+
 // 要旨キャッシュ照合（§1-1b）。summariesMap: {key:{hash,summary}}。key=原典の相対パス。
 export function summaryFor(key, currentHash, summariesMap) {
   const m = summariesMap || {};
