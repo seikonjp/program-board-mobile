@@ -702,3 +702,53 @@ textarea.sheet-comment-input { flex: 1; min-height: 40px; resize: none; }
 .entry-units { color: #7c3aed; }
 .entry-updated { color: #9ca3af; }
 .sheet-read.is-read { background: #dcfce7; }
+
+/* ===== D-1 シナリオ Sheet 合成表示（SPEC_V3 §2・build 31 便2） ===== */
+.sheet-block-head.is-case-group { display: flex; align-items: baseline; gap: 8px; border-left: 4px solid var(--line); padding-left: 8px; }
+.sheet-block-head.grp-approved { border-left-color: var(--ok); }
+.sheet-block-head.grp-open { border-left-color: var(--later); }
+.group-approval { font-size: 11px; font-weight: 600; color: var(--ink-soft); background: #eef1f6; border-radius: 999px; padding: 1px 8px; }
+.group-approval.is-done { color: #fff; background: var(--ok); }
+
+.sheet-case { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px 4px; margin: 10px 0; background: var(--surface); }
+.sheet-case.is-checked { border-color: var(--ok); background: #f4fbf6; }
+.case-meta-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 4px 0 8px 28px; }
+.case-marker { font-size: 15px; }
+.chip-case-id { background: #e6ecfb; color: #2f6df6; font-weight: 600; }
+.chip-case-status { background: #e9edf3; color: #3a4658; font-weight: 600; }
+.chip-case-status.src-none { color: #8a6d1f; background: #f6efdc; }
+.chip-case-status.src-test { color: #fff; background: var(--ok); }
+.chip-case-class { font-weight: 600; }
+.class-normal { background: #e6f0ff; color: #2f6df6; }
+.class-boundary { background: #fdeecf; color: #a4700f; }
+.class-state { background: #efe6fb; color: #7a3fd6; }
+.class-graceful { background: #fde4e4; color: #c0392b; }
+.class-desire { background: #e3f4ea; color: #1f7a4d; }
+.class-other { background: #eef1f6; color: #556; }
+
+.case-sec { margin: 6px 0 6px 28px; }
+.case-sec-label { font-size: 11px; font-weight: 700; color: var(--ink-soft); margin-bottom: 2px; }
+.case-sec-body { white-space: pre-wrap; word-break: break-word; font-size: 13px; line-height: 1.55; margin: 0; font-family: inherit; }
+.case-sec-concern { border-left: 3px solid #e6c565; padding-left: 8px; }
+.case-sec-concern .case-sec-label { color: #8a6d1f; }
+.case-collapse { margin: 6px 0 6px 28px; }
+.case-collapse > summary { cursor: pointer; font-size: 11px; font-weight: 700; color: var(--ink-soft); }
+.case-collapse .case-sec-body { margin-top: 4px; color: var(--ink-soft); }
+
+.sheet-entry-wrap { border-bottom: 1px solid var(--line); }
+.sheet-entry { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 6px; }
+.entry-caret { background: none; border: none; cursor: pointer; color: var(--ink-soft); font-size: 12px; width: 20px; }
+.entry-caret-spacer { width: 20px; display: inline-block; }
+.sheet-entry .entry-mid { cursor: pointer; flex: 1; min-width: 0; }
+.entry-stage { font-size: 11px; color: #556; background: #eef1f6; border-radius: 4px; padding: 0 6px; }
+.entry-groupsum { font-size: 11px; color: var(--ink-soft); font-weight: 600; }
+.entry-groupsum.is-done { color: var(--ok); }
+.sheet-entry-groups { padding: 0 6px 6px 28px; display: flex; flex-direction: column; gap: 4px; }
+.sheet-group-row { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); cursor: pointer; }
+.sheet-group-row.grp-approved { border-left: 3px solid var(--ok); }
+.sheet-group-row.grp-open { border-left: 3px solid var(--later); }
+.group-state-icon { width: 16px; }
+.group-heading { flex: 1; min-width: 0; font-size: 13px; }
+.chip-approval { font-weight: 600; }
+.chip-approval.is-done { color: #fff; background: var(--ok); }
+.chip-approval-cases { color: var(--ink-soft); }

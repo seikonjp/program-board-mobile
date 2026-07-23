@@ -487,15 +487,42 @@ export function nextCardId(names) {
   return 'C-U' + String(max + 1).padStart(4, '0');
 }
 
+// slug の安全な打ち切り（SPEC_V3 §2 磨き a・2026-07-23・Mac lib/createCard.js と同一挙動）。
+//   (1) 括弧安全: 切り位置が開き括弧の内側なら開き括弧の手前まで戻す（括弧の途中で切れない）。
+//   (2) 語境界: 括弧問題が無ければ直近の区切り（- _ 空白）で切る（半分以上残る場合のみ）。
+const SLUG_OPEN = '（(［[｛{「『【〈《〔';
+const SLUG_CLOSE = '）)］]｝}」』】〉》〕';
+export function safeTruncateSlug(s, max) {
+  const str = String(s == null ? '' : s);
+  const cap = (max == null ? 40 : max);
+  if (str.length <= cap) return str;
+  let cut = cap;
+  let depth = 0;
+  let lastOpenOutside = -1;
+  for (let i = 0; i < cut; i++) {
+    const ch = str[i];
+    if (SLUG_OPEN.indexOf(ch) >= 0) { if (depth === 0) lastOpenOutside = i; depth++; }
+    else if (SLUG_CLOSE.indexOf(ch) >= 0) { if (depth > 0) depth--; }
+  }
+  if (depth > 0 && lastOpenOutside >= 0) {
+    cut = lastOpenOutside;
+  } else {
+    const seg = str.slice(0, cut);
+    const bi = Math.max(seg.lastIndexOf('-'), seg.lastIndexOf('_'), seg.lastIndexOf(' '));
+    if (bi >= Math.floor(cap / 2)) cut = bi;
+  }
+  return str.slice(0, cut).replace(/[-_\s]+$/, '');
+}
+
 export function slugify(title) {
   if (!title) return 'card';
-  const s = String(title)
+  let s = String(title)
     .trim()
     .replace(/[\s　]+/g, '-')
     .replace(/[\/\\]+/g, '-')
     .replace(/[<>:"|?*\x00-\x1f]+/g, '')
-    .replace(/^[.\-]+|[.\-]+$/g, '')
-    .slice(0, 40);
+    .replace(/^[.\-]+|[.\-]+$/g, '');
+  s = safeTruncateSlug(s, 40).replace(/^[.\-]+|[.\-]+$/g, '');
   return s.length > 0 ? s : 'card';
 }
 
@@ -553,7 +580,8 @@ export function buildNewCardMarkdown({ id, title, direction, type, subject, body
     'subject: ' + (subj ? subj : '""'),
     'tags: []',
     'surface: ""',
-    'status: new',
+    // status 既定値（SPEC_V3 §2 磨き b・2026-07-23）: report/review 型＝作成時から review（対応待ち）。
+    'status: ' + ((type === 'report' || type === 'review') ? 'review' : 'new'),
     'created: ' + date,
     '---',
   ].join('\n');
@@ -661,10 +689,10 @@ export function parseSheetBlocks(body, numbered) {
       const heading = hm[2].trim();
       starts.push({ offset, kind: 'heading', level: hm[1].length, heading, id: sheetHeadingId(heading) });
     } else {
-      const cm = /^- \[[ xX]\]( ?)(.*)$/.exec(line); // トップレベルのチェックボックス＝CASE開始
+      const cm = /^- \[([ xX])\]( ?)(.*)$/.exec(line); // トップレベルのチェックボックス＝CASE開始
       if (cm) {
-        const label = cm[2].trim();
-        starts.push({ offset, kind: 'case', level: 0, heading: label, id: sheetHeadingId(label.replace(/[*`]/g, '')) });
+        const label = cm[3].trim();
+        starts.push({ offset, kind: 'case', level: 0, heading: label, id: sheetHeadingId(label.replace(/[*`]/g, '')), checked: cm[1].toLowerCase() === 'x' });
       } else if (numbered) {
         const nm = /^(\d+)\. /.exec(line);
         if (nm) starts.push({ offset, kind: 'item', level: 0, heading: line.trim(), id: nm[1] });
@@ -676,7 +704,7 @@ export function parseSheetBlocks(body, numbered) {
   for (let k = 0; k < starts.length; k++) {
     const s = starts[k];
     const end = k + 1 < starts.length ? starts[k + 1].offset : text.length;
-    blocks.push({ index: k, kind: s.kind, level: s.level, id: s.id, heading: s.heading, start: s.offset, end });
+    blocks.push({ index: k, kind: s.kind, level: s.level, id: s.id, heading: s.heading, start: s.offset, end, checked: !!s.checked });
   }
   return blocks;
 }
@@ -785,19 +813,34 @@ export function revertApprovedToReviewed(text) {
 }
 
 // 開いたシートの表示ペイロード（frontmatterメタ＋序文＋項目ブロック・raw付き）。Mac版 sheetItemPayload と同形。
-export function sheetPayload(text, numbered) {
+export function sheetPayload(text, numbered, testStatusMap) {
   const p = parseCard(text);
   // 本文が全文の何行目から始まるか（frontmatter 行数）= チェックボックスの全文行番号を出すための基準。
   const bodyStartLine = (String(text).slice(0, String(text).length - p.body.length).match(/\n/g) || []).length;
   const raw = parseSheetBlocks(p.body, numbered);
-  const blocks = raw.map((b) => ({
-    index: b.index, kind: b.kind, level: b.level, id: b.id, heading: b.heading,
-    raw: p.body.slice(b.start, b.end).replace(/\s+$/, ''),
-    collapse: sheetBlockCollapses(b),
-    startLine: bodyStartLine + (p.body.slice(0, b.start).match(/\n/g) || []).length,
-  }));
+  // D-1 表示合成（§2-1）: 状態(item1)の導出源＝原典マーカー＋test_status（機能/FPU単位・省略時 null）。
+  const scenarioMeta = parseScenarioMeta(text);
+  // ファイル名は payload に渡らない（テキストのみ）＝frontmatter target と冒頭宣言の対象から関連単位を得る。
+  const relatedUnits = extractRelatedUnits('', text).concat(scenarioMeta.target || [])
+    .filter((v, i, a) => v && a.indexOf(v) === i);
+  const tsEntry = testStatusFor(relatedUnits, testStatusMap || {});
+  const blocks = raw.map((b) => {
+    const rawText = p.body.slice(b.start, b.end).replace(/\s+$/, '');
+    const out = {
+      index: b.index, kind: b.kind, level: b.level, id: b.id, heading: b.heading,
+      raw: rawText, checked: !!b.checked,
+      collapse: sheetBlockCollapses(b),
+      startLine: bodyStartLine + (p.body.slice(0, b.start).match(/\n/g) || []).length,
+    };
+    if (b.kind === 'case') out.caseFields = parseCaseFields(rawText, tsEntry);
+    return out;
+  });
   const preamble = (raw.length ? p.body.slice(0, raw[0].start) : p.body).replace(/\s+$/, '');
-  return { meta: parseSheetMeta(text), preamble, preambleStartLine: bodyStartLine, blocks, checkStats: countSheetCheckboxes(text) };
+  return {
+    meta: parseSheetMeta(text), preamble, preambleStartLine: bodyStartLine, blocks,
+    checkStats: countSheetCheckboxes(text),
+    approval: sheetApprovalSummary(raw), scenarioMeta, relatedUnits,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1298,6 +1341,238 @@ export function libraryMdBlocks(text) {
 }
 
 // ===========================================================================
+// D-1 シナリオ Sheet 表示合成（SPEC_V3 §2・v2.11 便2）— 純粋関数（Mac server.js と挙動互換）
+// 原典mdの様式・バイトは一切変更しない。表示は機械抽出＋レジストリ結合の合成のみ。
+// ===========================================================================
+
+// 状態語彙7値（§2-2）。導出源が無い項目は「不明」を正規表示（偽装しない）。
+export const CASE_STATUS_VOCAB = ['実装済み', '実装可（未着手）', '追加実装が必要', '他機能の実装待ち', '実装中', 'テスト一部成功・停止中', 'デバッグ中', '不明'];
+
+// 分類の正式語（§2-1項目0）。原典の表記ゆらぎ（境界→境界値）を正規化。最も具体的なものを優先。
+export function detectCaseClassification(text) {
+  const s = String(text == null ? '' : text);
+  if (/優雅な失敗/.test(s)) return '優雅な失敗';
+  if (/状態依存/.test(s)) return '状態依存';
+  if (/境界値/.test(s) || /境界/.test(s)) return '境界値';
+  if (/望まし/.test(s)) return '望ましさ観察';
+  if (/正常系/.test(s)) return '正常系';
+  return null;
+}
+
+// 原典ラベル → 表示項目の写像（§2-1抽出規約・前方一致）。未写像は「その他」（フラット原則）。
+export function caseFieldTarget(label) {
+  const L = String(label == null ? '' : label).trim();
+  if (/^実装可否/.test(L)) return { item: 1, key: 'marker' };
+  if (/^起きること/.test(L)) return { item: 3, key: 'content', order: 1 };
+  if (/^前提/.test(L)) return { item: 3, key: 'content', order: 2 };
+  if (/^操作/.test(L) || /契機/.test(L)) return { item: 3, key: 'content', order: 3 };
+  if (/^観察/.test(L)) return { item: 3, key: 'content', order: 4 };
+  if (/^検収/.test(L)) return { item: 2, key: 'completion' };
+  if (/^実装/.test(L)) return { item: 5, key: 'impl' };
+  if (/品質基準/.test(L)) return { item: 6, key: 'quality' };
+  if (/^失敗/.test(L)) return { item: 7, key: 'failure' };
+  if (/ギャップ/.test(L)) return { item: 8, key: 'gap' };
+  if (/^対象/.test(L)) return { item: 10, key: 'target', collapse: true };
+  if (/^根拠/.test(L)) return { item: 10, key: 'basis', collapse: true };
+  return { item: 9.5, key: 'other', label: L };
+}
+
+// ぶら下がり行 "  - ラベル: 本文" からラベルと行内本文を分離。
+export function splitCaseLabel(rest) {
+  const s = String(rest == null ? '' : rest);
+  const ci = s.search(/[:：]/);
+  if (ci < 0) return { label: null, inline: s.trim(), hasColon: false };
+  let label = s.slice(0, ci).replace(/\*\*/g, '').replace(/`/g, '');
+  label = label.replace(/[（(].*$/, '').trim();
+  const inline = s.slice(ci + 1).replace(/^\s+/, '');
+  return { label, inline, hasColon: true };
+}
+
+// CASE見出し直下の実装可否マーカー🟢🟡🔴を抽出（§2-1）。🔴は待ち先も拾う。
+export function caseImplMarker(caseRaw) {
+  const lines = String(caseRaw == null ? '' : caseRaw).split('\n');
+  let markerLine = null;
+  for (let i = 1; i < lines.length; i++) { if (/実装可否/.test(lines[i])) { markerLine = lines[i]; break; } }
+  if (!markerLine) {
+    let seen = 0;
+    for (let i = 1; i < lines.length && seen < 3; i++) {
+      if (lines[i].trim() === '') continue;
+      seen++;
+      if (/[🟢🟡🔴]/u.test(lines[i])) { markerLine = lines[i]; break; }
+    }
+  }
+  if (!markerLine) return { marker: null, detail: null };
+  const m = /[🟢🟡🔴]/u.exec(markerLine);
+  if (!m) return { marker: null, detail: null };
+  const marker = m[0];
+  let detail = null;
+  if (marker === '🔴') {
+    const dm = /待ち先[＝=]\s*([^）)〕】》」』\]\n・]+)/.exec(markerLine) || /🔴[^（(]*[（(]([^）)]+)[）)]/.exec(markerLine);
+    if (dm) detail = dm[1].trim();
+  }
+  return { marker, detail };
+}
+
+// 状態語彙の導出（§2-2）。testStatus 有→そこから／無→マーカーから／どちらも無→「不明」。
+export function caseStatusVocab(marker, testStatus, markerDetail) {
+  const ts = testStatus || null;
+  if (ts && ts.status) {
+    const s = String(ts.status).toLowerCase();
+    if (/pass|green|done|implemented|^ok$/.test(s)) return { vocab: '実装済み', source: 'test' };
+    if (/partial|一部|stopped|停止/.test(s)) {
+      const n = ts.passed != null ? ts.passed : '';
+      const t = ts.total != null ? ts.total : '';
+      const nm = (n !== '' || t !== '') ? '（' + n + '/' + t + '）' : '';
+      return { vocab: 'テスト一部成功・停止中' + nm, source: 'test' };
+    }
+    if (/debug|デバッグ|fail|red/.test(s)) return { vocab: 'デバッグ中', source: 'test' };
+    if (/progress|wip|進行|中/.test(s)) return { vocab: '実装中', source: 'test' };
+  }
+  if (marker === '🟢') return { vocab: '実装可（未着手）', source: 'marker' };
+  if (marker === '🟡') return { vocab: '追加実装が必要', source: 'marker' };
+  if (marker === '🔴') return { vocab: '他機能の実装待ち' + (markerDetail ? '（' + markerDetail + '）' : ''), source: 'marker' };
+  return { vocab: '不明', source: 'none' };
+}
+
+// CASEブロックの合成表示データ（§2-1・記載順0〜10）。原典行を verbatim 保持（バイト非改変）。
+export function parseCaseFields(caseRaw, testStatus) {
+  const text = String(caseRaw == null ? '' : caseRaw);
+  const lines = text.split('\n');
+  const header = lines[0] || '';
+  const hm = /^(\s*)- \[([ xX])\]\s?(.*)$/.exec(header);
+  const checked = hm ? hm[2].toLowerCase() === 'x' : false;
+  const headingText = (hm ? hm[3] : header).trim();
+  const plain = headingText.replace(/\*\*/g, '').replace(/`/g, '');
+  const idM = /(CASE-[0-9A-Za-z_]+)/.exec(plain);
+  const caseId = idM ? idM[1] : '';
+  const classification = detectCaseClassification(plain);
+  const mk = caseImplMarker(text);
+  const status = caseStatusVocab(mk.marker, testStatus, mk.detail);
+
+  let hang = null;
+  for (let i = 1; i < lines.length; i++) { const m = /^(\s+)- /.exec(lines[i]); if (m) { hang = m[1].length; break; } }
+  const rawFields = [];
+  let cur = null;
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i];
+    let isTop = false;
+    if (hang != null && /^\s*- /.test(line)) {
+      const lead = (/^(\s*)/.exec(line))[1].length;
+      if (lead === hang) isTop = true;
+    }
+    if (isTop) {
+      if (cur) rawFields.push(cur);
+      const sp = splitCaseLabel(line.slice(hang + 2));
+      cur = { label: sp.label, lines: [line] };
+    } else if (cur) {
+      cur.lines.push(line);
+    }
+  }
+  if (cur) rawFields.push(cur);
+
+  const buckets = {};
+  const bucket = (t) => {
+    if (!buckets[t.key]) buckets[t.key] = { item: t.item, key: t.key, label: t.label || null, collapse: !!t.collapse, segments: [] };
+    return buckets[t.key];
+  };
+  for (const f of rawFields) {
+    const t = f.label ? caseFieldTarget(f.label) : { item: 9.5, key: 'other', label: f.label };
+    if (t.key === 'marker') continue;
+    bucket(t).segments.push({ label: f.label, order: t.order || 0, lines: f.lines });
+  }
+  if (buckets.content) buckets.content.segments.sort((a, b) => (a.order || 0) - (b.order || 0));
+  if (buckets.impl) {
+    const dl = [];
+    for (const seg of buckets.impl.segments) for (const l of seg.lines) if (/前提待ち/.test(l)) dl.push(l);
+    if (dl.length) buckets.deps = { item: 4, key: 'deps', label: null, collapse: false, segments: [{ label: null, order: 0, lines: dl }] };
+  }
+  const concerns = [];
+  for (let i = 1; i < lines.length; i++) if (lines[i].indexOf('◆') >= 0) concerns.push(lines[i]);
+
+  const ITEM_LABEL = {
+    completion: '完成確認', content: '内容', deps: '依存', impl: '実装',
+    quality: '品質基準', failure: '失敗の見どころ', gap: '現況ギャップ', other: 'その他',
+    target: '対象', basis: '根拠',
+  };
+  const sections = Object.keys(buckets)
+    .map((k) => ({ item: buckets[k].item, key: k, label: ITEM_LABEL[k] || buckets[k].label || k, collapse: buckets[k].collapse, segments: buckets[k].segments }))
+    .sort((a, b) => a.item - b.item);
+
+  return { caseId, checked, headingText, headingPlain: plain, classification, marker: mk.marker, markerDetail: mk.detail, status, sections, concerns };
+}
+
+// CASEグループ（§2-3）＝原典の分類見出し（### 区切り）単位。blocks は parseSheetBlocks の出力（checked 付き）。
+export function groupSheetCases(blocks) {
+  const groups = [];
+  let cur = null;
+  const start = (b) => { cur = { heading: b ? b.heading : '（グループなし）', headingIndex: b ? b.index : -1, level: b ? b.level : 0, cases: [] }; groups.push(cur); };
+  for (const b of (blocks || [])) {
+    if (b.kind === 'heading') start(b);
+    else if (b.kind === 'case') {
+      if (!cur) start(null);
+      cur.cases.push({ index: b.index, id: b.id, heading: b.heading, checked: !!b.checked });
+    }
+  }
+  return groups.filter((g) => g.cases.length > 0).map((g) => {
+    const total = g.cases.length;
+    const approvedCount = g.cases.filter((c) => c.checked).length;
+    return { heading: g.heading, headingIndex: g.headingIndex, level: g.level, cases: g.cases, total, approvedCount, approved: total > 0 && approvedCount === total };
+  });
+}
+
+// 文書レベルの承認集計（§2-3・「全グループ承認済み」の集計表示）。
+export function sheetApprovalSummary(blocks) {
+  const groups = groupSheetCases(blocks);
+  const groupTotal = groups.length;
+  const groupApproved = groups.filter((g) => g.approved).length;
+  const totalCases = groups.reduce((s, g) => s + g.total, 0);
+  const approvedCases = groups.reduce((s, g) => s + g.approvedCount, 0);
+  return { groups, groupTotal, groupApproved, allApproved: groupTotal > 0 && groupApproved === groupTotal, totalCases, approvedCases };
+}
+
+// シナリオ原典のメタ（§4）。frontmatter 優先・無ければ冒頭宣言 blockquote からフォールバック。両形で動く。
+export function parseScenarioMeta(text) {
+  const src = String(text == null ? '' : text);
+  const out = { id: null, layer: null, title: null, target: [], stage: null, status: null, source: 'none' };
+  const fmM = /^---\n([\s\S]*?)\n---/.exec(src);
+  if (fmM) {
+    const fm = fmM[1];
+    const get = (k) => { const m = new RegExp('(^|\\n)\\s*' + k + '\\s*:\\s*(.+)').exec(fm); return m ? m[2].trim() : null; };
+    out.id = get('id'); out.layer = get('layer'); out.title = get('title');
+    out.stage = get('stage'); out.status = get('status');
+    const tg = get('target');
+    if (tg) {
+      if (/^\[.*\]$/.test(tg)) out.target = tg.slice(1, -1).split(',').map((x) => x.replace(/['"]/g, '').trim()).filter(Boolean);
+      else out.target = [tg.replace(/['"]/g, '').trim()].filter(Boolean);
+    }
+    if (out.id || out.layer || out.stage || out.status || out.target.length) out.source = 'frontmatter';
+  }
+  if (out.stage == null || out.status == null || out.target.length === 0) {
+    for (const line of src.split('\n')) {
+      if (!/^>/.test(line)) continue;
+      if (!/対象[:：]/.test(line) || !/段階[:：]/.test(line)) continue;
+      const om = /対象[:：]\s*([^／\/\n]+)/.exec(line);
+      const sm = /段階[:：]\s*([^／\/\n]+)/.exec(line);
+      const stm = /状態[:：]\s*([^／\/\n]+)/.exec(line);
+      const clean = (v) => String(v).replace(/\*\*/g, '').replace(/[（(].*$/, '').trim();
+      if (out.target.length === 0 && om) { const v = clean(om[1]); if (v) out.target = [v]; }
+      if (out.stage == null && sm) out.stage = clean(sm[1]);
+      if (out.status == null && stm) out.status = clean(stm[1]);
+      if (out.source === 'none') out.source = 'blockquote';
+      break;
+    }
+  }
+  return out;
+}
+
+// relatedUnits に一致する test_status エントリを引く（最初の一致・無ければ null）。
+export function testStatusFor(relatedUnits, testStatusMap) {
+  const m = testStatusMap || {};
+  for (const id of (relatedUnits || [])) { if (m[id]) return m[id]; }
+  return null;
+}
+
+// ===========================================================================
 // 状態表現基盤（SPEC_V3 §1-1・§1-2・v2.10 / build 30）— 純粋関数（Mac server.js と同名・挙動互換）
 // ===========================================================================
 
@@ -1432,6 +1707,11 @@ export function enrichSheetEntryFromText(text, meta, summaries, reverseClosureMa
   const updatedDaysAgo = m.mtimeMs ? Math.max(0, Math.floor((now - m.mtimeMs) / 86400000)) : null;
   let updated = '';
   if (m.mtimeMs) { const d = new Date(m.mtimeMs); const p = (n) => String(n).padStart(2, '0'); updated = d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()); }
+  // CASEグループ承認集計（§2-3・2層一覧用）＋シナリオメタ（§4）。
+  let approval = { groups: [], allApproved: false };
+  try { approval = sheetApprovalSummary(parseSheetBlocks(parseCard(text || '').body, m.numbered)); } catch { /* 空でも壊れない */ }
+  const groupSummaries = approval.groups.map((g) => ({ heading: g.heading, headingIndex: g.headingIndex, total: g.total, approvedCount: g.approvedCount, approved: g.approved }));
+  const scenarioMeta = parseScenarioMeta(text || '');
   return {
     source: m.source, file: m.file, path: key,
     title: heading || m.file, heading,
@@ -1440,5 +1720,7 @@ export function enrichSheetEntryFromText(text, meta, summaries, reverseClosureMa
     currentHash, updatedDaysAgo, updated,
     summary: sm.summary, summaryPresent: sm.present, stale: sm.stale,
     relatedUnits, impact, unresolved,
+    groups: groupSummaries, docApproved: approval.allApproved,
+    stage: scenarioMeta.stage || null, statusDecl: scenarioMeta.status || null, layer: scenarioMeta.layer || null,
   };
 }

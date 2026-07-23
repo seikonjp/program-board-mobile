@@ -1439,11 +1439,15 @@ test('㉚ sheets view + group wiring (source-text checks) (v2.2)', () => {
   const sheets = readDoc('views/sheets.js');
   assert.ok(sheets.includes("registerView({ id: 'sheets'"), 'sheets ビューが登録される');
   assert.ok(sheets.includes('ctx.program.loadSheetBoard()') && sheets.includes('ctx.program.readSheet('), '一覧（3画面タグボード）＋開くを program に委譲（便1で listSheets→loadSheetBoard）');
-  assert.ok(sheets.includes('ctx.program.addSheetComment(') && sheets.includes('ctx.program.approveSheet('), 'コメント＋承認を program に委譲');
+  assert.ok(sheets.includes('ctx.program.addSheetComment('), 'コメントを program に委譲');
+  // §2-3 改定（v2.11 便2）: 承認ボタン概念の完全撤去＝チェックの純粋導出のみ。view は approveSheet を呼ばない。
+  assert.ok(!sheets.includes('ctx.program.approveSheet(') && !sheets.includes('sheet-approve'), '承認ボタンは撤去（§2-3・approveSheet 呼び出し/DOM を持たない）');
   assert.ok(sheets.includes('ctx.program.toggleSheetCheckbox('), 'チェックボックスのトグルを program に委譲（§2-4）');
-  assert.ok(sheets.includes('未チェック') && sheets.includes('checkStats'), '未チェック残数の表示＋承認ゲート（§2-4 B）');
+  assert.ok(sheets.includes('未チェック') && sheets.includes('checkStats'), '未チェック残数の表示（非CASEシートの集計・§2-4 B 継承）');
   assert.ok(!sheets.includes('editSheet') && !sheets.includes('replaceUnderHeading') && !sheets.includes('editCard'), '本文編集UIは提供しない（コメントのみ）');
-  assert.ok(sheets.includes("st === 'reviewed'") && sheets.includes('meta.reviewCard'), '承認ボタンは review_card+reviewed で活性');
+  // §2-3/§2-1: グループ承認n/mの導出表示＋CASE合成表示（記載順0〜10）。
+  assert.ok(sheets.includes('グループ承認') && sheets.includes('payload.approval'), 'グループ承認n/mを導出表示（§2-3）');
+  assert.ok(sheets.includes('renderComposedCase') && sheets.includes('caseFields'), 'CASE合成表示へ委譲（§2-1）');
   assert.ok(sheets.includes('block.collapse') && sheets.includes('details'), '批評ブロックは details で折りたたみ');
 
   // 群配線（app.js）
@@ -1950,4 +1954,180 @@ test('§1-2a program.loadSheetBoard: 3 tags, empty sources safe, SC-F enrich (bu
   const found = board.tags.find((t) => t.id === 'foundation');
   assert.strictEqual(found.pending, true);
   assert.deepStrictEqual(found.subcategories, []);
+});
+
+// ===========================================================================
+// build 31（v2.11・SPEC_V3 §2）: D-1 シナリオ Sheet 表示合成・状態語彙7値・承認モデルv2・frontmatter・磨き2点
+// （Mac server.js の便2テストと挙動互換・純関数を fixture で固定）
+// ===========================================================================
+
+const SCEN_A_M = `---
+id: SC-F_PL_AM_AM
+layer: F
+title: SC-F_PL_AM_AM
+target: [PL_AM_AM]
+stage: S1
+status: 批評済
+---
+
+# SC-F_PL_AM_AM 【機能】テスト
+
+## ケース表
+
+### 正常系——空間構成
+- [ ] **CASE-01 標準プラン（正常系・壁厚）**
+  - 前提: 平屋・部屋のみ
+  - 操作/契機: 自動
+  - 起きること: 部屋割りから壁が立ち上がる
+  - 観察可能な結果:
+    - 2D-3D位置一致
+    - 隅角で清潔に取り合う
+  - **検収形態**: 画像=2D3D並置
+  - 対象: PL_AM_AM_WALL・PL_AM_AM_FLOOR
+  - 根拠: DR上流#1
+- [x] **CASE-02 建具の面一（正常系）**
+  - 前提: ドアあり
+  - 起きること: 開口が壁に面一で嵌まる
+  - 対象: PL_AM_AM_DOOR
+
+### 境界——極値
+- [ ] **CASE-03 極小室（境界）**
+  - 前提: 1畳未満
+  - 観察可能な結果:
+    - ◆床ポリゴンが負値になりうる
+    - crashしない
+  - 対象: PL_AM_AM_WALL
+`;
+
+const SCEN_B_M = `# SC-F_XX 【機能】YY
+
+> 対象: XX_FEATURE ／ 段階: S2 ／ 親: SC-J001 ／ 状態: **起草中**（材料整備中）
+
+## ケース表
+
+### 正常系
+- [ ] **CASE-01 あるべき体験（正常系）**
+  - **実装可否**: 🟡同時実装
+  - 前提: 前提A
+  - 起きること: こう動くべき
+  - **実装**（統合欄）:
+    - 状態: 一部未実装
+    - WALL｜前提待ち（他機能=SOMEUNIT）｜新規
+  - **関連品質基準**: QS-001（位置一致）
+  - **失敗探索の考察**: 面の欠けを暴く
+  - **検収形態**: 画像
+  - 対象: XX_FEATURE
+`;
+
+test('㊵ parseSheetBlocks case checked + detectCaseClassification (build 31)', () => {
+  const blocks = P.parseSheetBlocks(P.parseCard(SCEN_A_M).body, false);
+  const cases = blocks.filter((b) => b.kind === 'case');
+  assert.deepStrictEqual(cases.map((c) => [c.id, c.checked]), [['CASE-01', false], ['CASE-02', true], ['CASE-03', false]]);
+  assert.strictEqual(P.detectCaseClassification('CASE-03 極小（境界）'), '境界値');
+  assert.strictEqual(P.detectCaseClassification('CASE-14 部分（優雅な失敗・境界線）'), '優雅な失敗');
+  assert.strictEqual(P.detectCaseClassification('分類なし'), null);
+});
+
+test('㊶ caseImplMarker + caseStatusVocab: 7-value vocab (build 31)', () => {
+  assert.deepStrictEqual(P.caseImplMarker('- [ ] **CASE-01 x**\n  - 前提: y\n'), { marker: null, detail: null });
+  assert.strictEqual(P.caseStatusVocab(null, null).vocab, '不明');
+  assert.strictEqual(P.caseImplMarker('- [ ] **x**\n  - **実装可否**: 🟡同時\n').marker, '🟡');
+  assert.strictEqual(P.caseStatusVocab('🟢', null).vocab, '実装可（未着手）');
+  assert.strictEqual(P.caseStatusVocab('🟡', null).vocab, '追加実装が必要');
+  const rk = P.caseImplMarker('- [ ] **x**\n  - **実装可否**: 🔴実装待ち〔待ち先＝UNIT-42〕\n');
+  assert.strictEqual(rk.detail, 'UNIT-42');
+  assert.strictEqual(P.caseStatusVocab('🔴', null, rk.detail).vocab, '他機能の実装待ち（UNIT-42）');
+  assert.strictEqual(P.caseStatusVocab('🟡', { status: 'passing' }).vocab, '実装済み');
+  assert.strictEqual(P.caseStatusVocab('🟡', { status: 'partial', passed: 3, total: 5 }).vocab, 'テスト一部成功・停止中（3/5）');
+  assert.ok(P.CASE_STATUS_VOCAB.includes('不明'));
+});
+
+test('㊷ parseCaseFields: mapping/order/hidden/◆ + form B impl-quality-failure-deps (build 31)', () => {
+  const body = P.parseCard(SCEN_A_M).body;
+  const blocks = P.parseSheetBlocks(body, false);
+  const rawById = (id) => { const b = blocks.find((x) => x.kind === 'case' && x.id === id); return body.slice(b.start, b.end); };
+  const cf = P.parseCaseFields(rawById('CASE-01'), null);
+  assert.strictEqual(cf.caseId, 'CASE-01');
+  assert.strictEqual(cf.classification, '正常系');
+  assert.strictEqual(cf.status.vocab, '不明');
+  assert.deepStrictEqual(cf.sections.map((s) => s.item), [2, 3, 10, 10]);
+  const keys = cf.sections.map((s) => s.key);
+  assert.ok(keys.includes('completion') && keys.includes('content'));
+  assert.ok(!keys.includes('impl') && !keys.includes('quality'), '原典に無い欄は非表示');
+  assert.strictEqual(cf.sections.find((s) => s.key === 'target').collapse, true);
+
+  const cf3 = P.parseCaseFields(rawById('CASE-03'), null);
+  assert.strictEqual(cf3.classification, '境界値');
+  assert.strictEqual(cf3.concerns.length, 1);
+
+  const bodyB = P.parseCard(SCEN_B_M).body;
+  const blocksB = P.parseSheetBlocks(bodyB, false);
+  const cbB = blocksB.find((x) => x.kind === 'case' && x.id === 'CASE-01');
+  const cfB = P.parseCaseFields(bodyB.slice(cbB.start, cbB.end), null);
+  assert.strictEqual(cfB.marker, '🟡');
+  assert.strictEqual(cfB.status.vocab, '追加実装が必要');
+  const keysB = cfB.sections.map((s) => s.key);
+  assert.ok(keysB.includes('impl') && keysB.includes('quality') && keysB.includes('failure') && keysB.includes('deps'));
+});
+
+test('㊸ group approval derivation + sheetApprovalSummary (build 31)', () => {
+  const blocks = P.parseSheetBlocks(P.parseCard(SCEN_A_M).body, false);
+  const groups = P.groupSheetCases(blocks);
+  assert.strictEqual(groups.length, 2);
+  assert.deepStrictEqual(groups.map((g) => [g.cases.length, g.approvedCount, g.approved]), [[2, 1, false], [1, 0, false]]);
+  const sum = P.sheetApprovalSummary(blocks);
+  assert.deepStrictEqual([sum.groupTotal, sum.groupApproved, sum.allApproved, sum.totalCases, sum.approvedCases], [2, 0, false, 3, 1]);
+  const allX = SCEN_A_M.replace(/- \[ \]/g, '- [x]');
+  const sum2 = P.sheetApprovalSummary(P.parseSheetBlocks(P.parseCard(allX).body, false));
+  assert.strictEqual(sum2.allApproved, true);
+});
+
+test('㊹ parseScenarioMeta: frontmatter first, blockquote fallback, both forms (build 31)', () => {
+  const a = P.parseScenarioMeta(SCEN_A_M);
+  assert.strictEqual(a.source, 'frontmatter');
+  assert.strictEqual(a.stage, 'S1');
+  assert.strictEqual(a.status, '批評済');
+  assert.deepStrictEqual(a.target, ['PL_AM_AM']);
+  const b = P.parseScenarioMeta(SCEN_B_M);
+  assert.strictEqual(b.source, 'blockquote');
+  assert.strictEqual(b.stage, 'S2');
+  assert.strictEqual(b.status, '起草中');
+  assert.deepStrictEqual(b.target, ['XX_FEATURE']);
+  const none = P.parseScenarioMeta('# t\nx\n');
+  assert.strictEqual(none.source, 'none');
+});
+
+test('㊺ sheetPayload composes caseFields/groups + test_status drives status (build 31)', () => {
+  const pay = P.sheetPayload(SCEN_B_M, false, { XX_FEATURE: { status: 'partial', passed: 2, total: 4 } });
+  assert.strictEqual(pay.scenarioMeta.stage, 'S2');
+  assert.strictEqual(pay.approval.totalCases, 1);
+  const c = pay.blocks.find((b) => b.kind === 'case');
+  assert.ok(c && c.caseFields);
+  assert.strictEqual(c.caseFields.status.vocab, 'テスト一部成功・停止中（2/4）', 'test_status がマーカーより優先');
+  assert.strictEqual(c.caseFields.status.source, 'test');
+  // test_status 無し→マーカー由来
+  const pay2 = P.sheetPayload(SCEN_B_M, false);
+  const c2 = pay2.blocks.find((b) => b.kind === 'case');
+  assert.strictEqual(c2.caseFields.status.vocab, '追加実装が必要');
+});
+
+test('㊻ 磨き a: safeTruncateSlug bracket-safe + word-boundary (build 31)', () => {
+  const title = 'Program-Board-v2.10／build-30公開（便1=Sheetトップ再編したのだ）';
+  const cut = P.safeTruncateSlug(title, 40);
+  assert.ok(cut.indexOf('（') === -1, '括弧の内側で切れない');
+  assert.ok(cut.startsWith('Program-Board-v2.10'));
+  assert.strictEqual(P.safeTruncateSlug('aaaa-bbbb-cccc-dddd', 10), 'aaaa-bbbb');
+  const slug = P.slugify(title.replace(/-/g, ' '));
+  assert.ok(slug.indexOf('（') === -1, 'slugify も括弧の途中で切らない');
+});
+
+test('㊼ 磨き b: buildNewCardMarkdown status default report/review→review, others→new (build 31)', () => {
+  const rep = P.buildNewCardMarkdown({ id: 'C-A0001', title: 't', direction: 'claude-to-user', type: 'report', subject: '', body: '', date: '2026-07-23' });
+  assert.ok(/^status: review$/m.test(rep));
+  const rev = P.buildNewCardMarkdown({ id: 'C-A0002', title: 't', direction: 'claude-to-user', type: 'review', subject: '', body: '', date: '2026-07-23' });
+  assert.ok(/^status: review$/m.test(rev));
+  const con = P.buildNewCardMarkdown({ id: 'C-U0001', title: 't', direction: 'user-to-claude', type: 'consult', subject: '', body: '', date: '2026-07-23' });
+  assert.ok(/^status: new$/m.test(con));
+  // 往復無損失（byte）維持
+  assert.strictEqual(P.serializeCard(P.parseCard(rep)), rep);
 });
