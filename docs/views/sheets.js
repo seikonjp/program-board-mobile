@@ -8,7 +8,7 @@
 import { registerView } from '../registry.js';
 import { h, openCardDetail } from './shared.js';
 import { deriveDocState, DOC_STATE_ICON, buildInbox, cardNeedsUserAction, typeLabel, statusLabel, parseMarkdownTables,
-  mergeViewStateStores, INBOX_TYPE_CHIPS, filterInboxRowsByType, subtagChips } from '../parser.js';
+  mergeViewStateStores, INBOX_TYPE_CHIPS, filterInboxRowsByType, subtagChips, stripInlineMdNoise } from '../parser.js';
 
 const SHEET_STATE_LABEL = { draft: '起草中', reviewed: '批評済', approved: '承認済' };
 
@@ -110,8 +110,9 @@ function legendDetails() {
   d.appendChild(h('summary', 'sheet-legend-sum', '凡例（記号の意味）'));
   const ul = h('div', 'sheet-legend-body');
   ul.appendChild(h('div', '', '🆕 新着（未開封） ／ ◐ 確認中 ／ ✓ 完了（全[x]・読了） ／ ↺ 再承認要'));
-  ul.appendChild(h('div', '', '承認＝チェックで承認 ／ 確認＝読了で確認 ／ stale＝要旨が原典より古い'));
+  ul.appendChild(h('div', '', '承認＝チェックで承認 ／ 確認＝読了で確認 ／ stale＝要旨・変換（簡潔化）が原典より古い（機械抽出で表示）'));
   ul.appendChild(h('div', '', '解除→N＝承認すると動ける作業単位数（概算）'));
+  ul.appendChild(h('div', '', '便8: Sheet冒頭1行＝何を承認/確認するのか（簡潔化） ／ 「簡潔化 未生成」＝変換キャッシュ無し（機械抽出のまま） ／ 「旧様式・新D2で再作成予定」＝新様式の構造を持たない原典 ／ 判断対象のみ表示（他は「原典を見る」で確認）'));
   ul.appendChild(h('div', '', '状態語彙7値: 実装済み／実装可（未着手）／追加実装が必要／他機能の実装待ち（〇〇）／実装中／テスト一部成功・停止中（n/m）／デバッグ中／不明'));
   ul.appendChild(h('div', '', '実装可否マーカー: 🟢実装可 🟡同時実装 🔴他機能の実装待ち（見出し直下） ／ グループ承認＝グループ内全ケース[x]で自動成立'));
   ul.appendChild(h('div', '', '開発フロー: シナリオ（承認）／動作定義（確認・単位=動作・由来=CASE参照）／完成定義（承認・テスト計画=計画数⇄定義済みの機械照合）／テスト報告（確認）'));
@@ -390,20 +391,72 @@ function renderHeaderMeta(ctx, payload) {
   }
 }
 
+// 便8（§5d-1/2/4）: 判断対象の冒頭バー＝docSummary＋原典リンク＋変換状態＋旧様式バナー。
+function renderSummaryBar(ctx, payload) {
+  const bar = h('div', 'sheet-summary-bar');
+  const line = h('div', 'sheet-doc-summary');
+  const st = payload.transformState;
+  if ((st === 'fresh' || st === 'stale') && payload.docSummary) {
+    renderInlineMd(payload.docSummary).forEach((n) => line.appendChild(n));
+    if (st === 'stale') line.appendChild(h('span', 'stale-badge', 'stale'));
+  } else {
+    line.appendChild(h('span', 'sheet-summary-ungenerated', '簡潔化 未生成'));
+  }
+  bar.appendChild(line);
+  if (payload.legacyFormat) bar.appendChild(h('div', 'sheet-legacy-banner', '旧様式・新D2で再作成予定'));
+  if (payload.originSub) {
+    const link = h('button', 'sheet-origin-link', '原典を見る');
+    link.onclick = () => { if (ctx.setTab) ctx.setTab('views'); if (ctx.openOrigin) ctx.openOrigin(payload.originSub); };
+    bar.appendChild(link);
+  }
+  return bar;
+}
+
+// 便8（§5d-4）: 旧様式原典の blocksキャッシュ（見出し→簡潔文）を主表示。
+function renderTransformBlocks(blocks) {
+  const wrap = h('div', 'sheet-transform-blocks');
+  wrap.appendChild(h('h3', 'sheet-transform-blocks-head', '要約（簡潔化）'));
+  Object.keys(blocks).forEach((heading) => {
+    const row = h('div', 'sheet-transform-block');
+    row.appendChild(h('div', 'sheet-transform-block-head', stripInlineMdNoise(heading)));
+    const b = h('div', 'sheet-transform-block-body');
+    renderInlineMd(String(blocks[heading])).forEach((n) => b.appendChild(n));
+    row.appendChild(b);
+    wrap.appendChild(row);
+  });
+  return wrap;
+}
+
 function renderSheet(ctx, payload) {
   renderHeaderMeta(ctx, payload);
   bodyEl.innerHTML = '';
-  if (payload.preamble) renderTextRegion(ctx, payload, payload.preamble, payload.preambleStartLine || 0, 'sheet-preamble')
-    .forEach((n) => bodyEl.appendChild(n));
+  // 便8（§5d-1）: 冒頭バー（docSummary＋原典リンク＋変換状態＋旧様式バナー）。序文/冒頭宣言の再掲はしない。
+  bodyEl.appendChild(renderSummaryBar(ctx, payload));
   // D-4 テスト報告（§3）: リスト形式（原典全文ブロックは表示しない＝リストが本体）。
   if (payload.report) { bodyEl.appendChild(renderTestReport(payload)); return; }
-  // D-2 動作定義（§3）: 動作単位の中核パネル（背骨=全文ブロックはこの下に続く）。
+  // D-2 動作定義（§3）: 確定項目＝由来/内容/受入の種。
   if (payload.behaviors && payload.behaviors.length) bodyEl.appendChild(renderBehaviorPanel(payload));
-  // D-3 完成定義（§3）: テスト計画の機械一致（あれば）。構造表は generic ブロックの表整形で表示。
+  // D-3 完成定義（§3）: テスト計画の機械一致（あれば）。
   if (payload.testPlan && payload.testPlan.present) bodyEl.appendChild(renderTestPlanPanel(payload.testPlan));
+  // 便8（§5d-4）: 旧様式でも無言raw落ちしない——blocksキャッシュ（fresh）があれば簡潔文を主表示。
+  if (payload.transformBlocks && Object.keys(payload.transformBlocks).length) bodyEl.appendChild(renderTransformBlocks(payload.transformBlocks));
   const groupByHeading = {};
-  ((payload.approval && payload.approval.groups) || []).forEach((g) => { if (g.headingIndex != null && g.headingIndex >= 0) groupByHeading[g.headingIndex] = g; });
-  (payload.blocks || []).forEach((b) => bodyEl.appendChild(renderBlock(ctx, payload, b, groupByHeading[b.index] || null)));
+  const shownHeadings = new Set();
+  ((payload.approval && payload.approval.groups) || []).forEach((g) => {
+    if (g.headingIndex != null && g.headingIndex >= 0) { groupByHeading[g.headingIndex] = g; if ((g.total || 0) > 0) shownHeadings.add(g.headingIndex); }
+  });
+  // 便8（§5d-1）: 判断対象のみ表示は開発フロー文書（D-1/D-2/D-3）に限定。RDS等は従来どおり全ブロック表示。
+  const judgmentOnly = payload.source === 'scenario' || payload.source === 'behaviors' || payload.source === 'completion';
+  if (judgmentOnly) {
+    (payload.blocks || []).forEach((b) => {
+      if (b.kind === 'case') bodyEl.appendChild(renderBlock(ctx, payload, b, null));
+      else if (b.kind === 'heading' && shownHeadings.has(b.index)) bodyEl.appendChild(renderBlock(ctx, payload, b, groupByHeading[b.index] || null));
+      // それ以外（序文・冒頭宣言・材料規格表・前提の空間・選択肢巡回・品質基準・批評履歴・運営）＝非表示（原典で見る）
+    });
+  } else {
+    if (payload.preamble) renderTextRegion(ctx, payload, payload.preamble, payload.preambleStartLine || 0, 'sheet-preamble').forEach((n) => bodyEl.appendChild(n));
+    (payload.blocks || []).forEach((b) => bodyEl.appendChild(renderBlock(ctx, payload, b, groupByHeading[b.index] || null)));
+  }
 }
 
 // 分類→CSS スラッグ。
@@ -602,6 +655,12 @@ function renderComposedCase(ctx, payload, block) {
   if (cf.marker) metaRow.appendChild(h('span', 'case-marker', cf.marker));
   if (cf.status && cf.status.vocab) metaRow.appendChild(h('span', 'chip chip-case-status src-' + (cf.status.source || 'none'), '状態: ' + cf.status.vocab));
   container.appendChild(metaRow);
+  // 便8（§5d-2）: 状態の補足（変換文 status_note・fresh のみ）。
+  if (cf.statusNote) {
+    const note = h('div', 'case-status-note');
+    renderInlineMd(cf.statusNote).forEach((n) => note.appendChild(n));
+    container.appendChild(note);
+  }
   const flat = (cf.sections || []).filter((s) => !s.collapse);
   const collapsibles = (cf.sections || []).filter((s) => s.collapse);
   flat.forEach((sec) => container.appendChild(renderCaseSection(sec)));
@@ -666,20 +725,25 @@ function restStartLine(block) {
   return (block.startLine || 0) + 1 + stripped;
 }
 
+// 便8（§5d-5）: text ノードのはぐれmd記号を除去（画面にmd記号を出さない・stripInlineMdNoise と可視一致）。
+function stripStrayMd(t) { return String(t == null ? '' : t).replace(/\*\*/g, '').replace(/`/g, ''); }
+
 // インライン Markdown の軽量整形（**太字**・`code` のみ）。XSS 安全＝text ノードのみで構築。
+// 便8: 対応外のはぐれ記号（奇数個の **・単独 `）は text ノード側で除去（md記号を画面に出さない）。
 function renderInlineMd(text) {
   const s = String(text == null ? '' : text);
   const nodes = [];
   const re = /\*\*([^*]+)\*\*|`([^`]+)`/g;
   let last = 0, m;
+  const pushText = (t) => { const clean = stripStrayMd(t); if (clean) nodes.push(document.createTextNode(clean)); };
   while ((m = re.exec(s)) !== null) {
-    if (m.index > last) nodes.push(document.createTextNode(s.slice(last, m.index)));
+    if (m.index > last) pushText(s.slice(last, m.index));
     if (m[1] !== undefined) { const b = h('strong'); b.textContent = m[1]; nodes.push(b); }
     else { const c = h('code'); c.textContent = m[2]; nodes.push(c); }
     last = re.lastIndex;
   }
-  if (last < s.length) nodes.push(document.createTextNode(s.slice(last)));
-  if (!nodes.length) nodes.push(document.createTextNode(s));
+  if (last < s.length) pushText(s.slice(last));
+  if (!nodes.length) nodes.push(document.createTextNode(stripStrayMd(s)));
   return nodes;
 }
 

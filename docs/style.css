@@ -566,6 +566,19 @@ textarea.op-comment { min-height: 56px; resize: vertical; }
   white-space: pre-wrap; word-break: break-word; margin: 0;
   font-family: inherit; font-size: 13px; color: var(--ink); line-height: 1.6;
 }
+/* 便8（§5d）: 判断対象の冒頭バー（docSummary＋原典リンク＋変換状態＋旧様式バナー） */
+.sheet-summary-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px 12px; margin: 0 0 8px; background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 8px; }
+.sheet-doc-summary { flex: 1 1 220px; font-size: 14px; font-weight: 600; color: var(--ink); line-height: 1.5; }
+.sheet-summary-ungenerated { font-size: 11px; font-weight: 500; color: var(--ink-soft); background: rgba(107,114,128,.14); padding: 1px 8px; border-radius: 8px; }
+.sheet-legacy-banner { flex: 1 1 100%; font-size: 12px; font-weight: 600; color: #92400e; background: #fef3c7; border: 1px solid #fcd34d; border-radius: 6px; padding: 4px 10px; }
+.sheet-origin-link { font-size: 12px; padding: 4px 12px; min-height: var(--tap); border: 1px solid var(--line); background: var(--surface); color: var(--accent); border-radius: 8px; white-space: nowrap; }
+.sheet-origin-link:active { background: var(--accent); color: var(--brand-ink); border-color: var(--accent); }
+.case-status-note { font-size: 12px; color: var(--ink-soft); margin: 2px 0 4px; line-height: 1.5; }
+.sheet-transform-blocks { border-top: 1px solid var(--line); padding: 8px 0; }
+.sheet-transform-blocks-head { margin: 0 0 6px; font-size: 13px; color: var(--ink-soft); }
+.sheet-transform-block { margin: 0 0 8px; }
+.sheet-transform-block-head { font-size: 12px; font-weight: 700; color: var(--ink); margin-bottom: 2px; }
+.sheet-transform-block-body { font-size: 13px; color: var(--ink); line-height: 1.5; }
 .sheet-block { border-top: 1px solid var(--line); padding: 10px 0; }
 .sheet-block-head { margin: 0 0 6px; font-size: 15px; }
 .sheet-block-collapse { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; }

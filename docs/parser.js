@@ -813,7 +813,9 @@ export function revertApprovedToReviewed(text) {
 }
 
 // 開いたシートの表示ペイロード（frontmatterメタ＋序文＋項目ブロック・raw付き）。Mac版 sheetItemPayload と同形。
-export function sheetPayload(text, numbered, testStatusMap) {
+//   便8（§5d）: opts={ transform, docHash } を渡すと docHash 照合（fresh/stale/absent）→ fresh のみ各ケースへ差し込む。
+//   docHash の計算（sha256）は program.js（async SubtleCrypto）で行い、ここへ結果だけ渡す（純関数のまま）。
+export function sheetPayload(text, numbered, testStatusMap, opts) {
   const p = parseCard(text);
   // 本文が全文の何行目から始まるか（frontmatter 行数）= チェックボックスの全文行番号を出すための基準。
   const bodyStartLine = (String(text).slice(0, String(text).length - p.body.length).match(/\n/g) || []).length;
@@ -824,6 +826,8 @@ export function sheetPayload(text, numbered, testStatusMap) {
   const relatedUnits = extractRelatedUnits('', text).concat(scenarioMeta.target || [])
     .filter((v, i, a) => v && a.indexOf(v) === i);
   const tsEntry = testStatusFor(relatedUnits, testStatusMap || {});
+  const o = opts || {};
+  const transform = resolveTransform(o.transform || null, o.docHash != null ? o.docHash : null);
   const blocks = raw.map((b) => {
     const rawText = p.body.slice(b.start, b.end).replace(/\s+$/, '');
     const out = {
@@ -832,14 +836,19 @@ export function sheetPayload(text, numbered, testStatusMap) {
       collapse: sheetBlockCollapses(b),
       startLine: bodyStartLine + (p.body.slice(0, b.start).match(/\n/g) || []).length,
     };
-    if (b.kind === 'case') out.caseFields = parseCaseFields(rawText, tsEntry);
+    if (b.kind === 'case') { const cf = parseCaseFields(rawText, tsEntry); out.caseFields = applyCaseTransform(cf, transform, cf.caseId); }
     return out;
   });
   const preamble = (raw.length ? p.body.slice(0, raw[0].start) : p.body).replace(/\s+$/, '');
+  const meta = parseSheetMeta(text);
   return {
-    meta: parseSheetMeta(text), preamble, preambleStartLine: bodyStartLine, blocks,
+    meta, preamble, preambleStartLine: bodyStartLine, blocks,
     checkStats: countSheetCheckboxes(text),
     approval: sheetApprovalSummary(raw), scenarioMeta, relatedUnits,
+    // 便8（§5d）: 判断対象のみ表示の材料（originSub/legacyFormat は program.js が source を知って付与）。
+    transformState: transform.state,
+    docSummary: (transform.state === 'absent') ? null : transform.docSummary,
+    transformBlocks: (transform.state === 'fresh') ? transform.blocks : null,
   };
 }
 
@@ -2035,6 +2044,89 @@ export function summaryFor(key, currentHash, summariesMap) {
   const entry = m[key];
   if (!entry || entry.summary == null) return { summary: null, stale: false, present: false };
   return { summary: String(entry.summary), stale: entry.hash !== currentHash, present: true };
+}
+
+// ===========================================================================
+// 便8（§5d）変換キャッシュの表示層 — 純関数（Mac server.js と同名・挙動互換・アプリは生成しない）
+// docHash(sha256) の計算は program.js（SubtleCrypto・async）が担い、照合そのものは純関数で分離。
+// ===========================================================================
+
+// 画面出力の md記号ゼロを保証（§5d-5）。renderInlineMd の可視テキストと一致する純関数（Mac と同名）。
+export function stripInlineMdNoise(text) {
+  return String(text == null ? '' : text)
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\*\*/g, '')
+    .replace(/`/g, '');
+}
+
+// 変換文の前処理（§5d-3 受け側保険）: 行頭bullet・原典ラベル語を剥がす（インライン**/`は保持）。
+const TRANSFORM_LABEL_RE = /^\s*(内容|完成確認|依存|実装|品質基準|失敗の見どころ|状態|由来|受入の種|対象|完成条件|前提|起きること|観察)\s*[:：]\s*/;
+export function scrubTransformText(text) {
+  let s = String(text == null ? '' : text).trim();
+  s = s.replace(/^\s*[-*+]\s+/, '');
+  s = s.replace(TRANSFORM_LABEL_RE, '');
+  return s;
+}
+
+// docHash 照合（§5d-2）。absent（無/非オブジェクト）／stale（docHash欠落 or 不一致）／fresh（一致）。
+export function resolveTransform(transformJson, currentDocHash) {
+  if (!transformJson || typeof transformJson !== 'object') {
+    return { state: 'absent', docSummary: null, generated: null, cases: {}, blocks: {} };
+  }
+  const docHash = transformJson.docHash != null ? String(transformJson.docHash) : null;
+  const fresh = docHash != null && currentDocHash != null && docHash === String(currentDocHash);
+  return {
+    state: fresh ? 'fresh' : 'stale',
+    docSummary: transformJson.docSummary != null ? String(transformJson.docSummary) : null,
+    generated: transformJson.generated != null ? String(transformJson.generated) : null,
+    cases: (transformJson.cases && typeof transformJson.cases === 'object') ? transformJson.cases : {},
+    blocks: (transformJson.blocks && typeof transformJson.blocks === 'object') ? transformJson.blocks : {},
+  };
+}
+
+const TRANSFORM_SECTION_META = {
+  completion: { item: 2, key: 'completion', label: '完成確認' },
+  content:    { item: 3, key: 'content',    label: '内容' },
+  deps:       { item: 4, key: 'deps',       label: '依存' },
+  impl:       { item: 5, key: 'impl',       label: '実装' },
+  quality:    { item: 6, key: 'quality',    label: '品質基準' },
+  failure:    { item: 7, key: 'failure',    label: '失敗の見どころ' },
+};
+
+// fresh のとき、1ケースの変換文を caseFields へ差し込む（§5d-2・Mac applyCaseTransform と挙動互換）。純関数。
+export function applyCaseTransform(caseFields, resolved, caseId) {
+  if (!caseFields || !resolved || resolved.state !== 'fresh') return caseFields;
+  const entry = resolved.cases && resolved.cases[caseId];
+  const f = entry && entry.fields;
+  if (!f || typeof f !== 'object') return caseFields;
+  const secByKey = {};
+  (caseFields.sections || []).forEach((s) => { secByKey[s.key] = s; });
+  const setDisplay = (key, units) => {
+    if (!units.length) return;
+    if (secByKey[key]) { secByKey[key].display = units; secByKey[key].fromTransform = true; }
+    else {
+      const meta = TRANSFORM_SECTION_META[key];
+      const sec = { item: meta.item, key, label: meta.label, collapse: false, segments: [], display: units, fromTransform: true };
+      caseFields.sections.push(sec);
+      secByKey[key] = sec;
+    }
+  };
+  const para = (t) => ({ kind: 'para', text: scrubTransformText(String(t)), level: 0 });
+  const bullet = (t) => ({ kind: 'bullet', text: scrubTransformText(String(t)), level: 1 });
+  if (f.status_note != null) caseFields.statusNote = scrubTransformText(String(f.status_note));
+  const contentUnits = [];
+  if (f.content != null) contentUnits.push(para(f.content));
+  (Array.isArray(f.conditions) ? f.conditions : []).forEach((c) => contentUnits.push(bullet(c)));
+  (Array.isArray(f.observations) ? f.observations : []).forEach((c) => contentUnits.push(bullet(c)));
+  setDisplay('content', contentUnits);
+  if (f.completion != null) setDisplay('completion', [para(f.completion)]);
+  if (f.deps != null) setDisplay('deps', [para(f.deps)]);
+  if (f.impl != null) setDisplay('impl', [para(f.impl)]);
+  if (f.quality != null) setDisplay('quality', [para(f.quality)]);
+  if (f.failure != null) setDisplay('failure', [para(f.failure)]);
+  caseFields.sections.sort((a, b) => a.item - b.item);
+  return caseFields;
 }
 
 // 関連単位の機械抽出（§1-2b）。ファイル名（SC-[JFC]_接頭辞を剥いだ本体）＋frontmatter target から。

@@ -135,6 +135,9 @@ export const config = {
 
   // summaries.json（AI補助キャッシュ・§1-1b）。アプリは生成しない（器のみ）。sheetArchplanRoot 相対。未存在→{}。
   summariesSub: 'Program/data/summaries.json',
+
+  // 便8（§5d）: 変換キャッシュの置き場（Program/data/transforms/〈sourceId〉/〈basename〉.json）。アプリは生成しない（読みのみ）。
+  transformsSub: 'Program/data/transforms',
   // 開封/読了 共有ストア（便6・§5b-1）: PC⇄モバイル同期。sheetArchplanRoot 相対。未存在→{}（無事故）。
   // 値={seenHash,doneHash,ts}・文書ごと最終更新優先。書き込みはユーザーアクション由来（開封・読了）のみ。
   viewStateSub: 'Program/data/view_state.json',

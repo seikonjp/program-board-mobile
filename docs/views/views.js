@@ -523,7 +523,9 @@ function renderOriginFile(payload) {
 
 // progressRow は ctx を引数に取らないため、onShow/create 時の ctx を保持して使う。
 let currentCtx = null;
-function onShowWrap(ctx) { currentCtx = ctx; onShow(ctx); }
-function createWrap(ctx) { currentCtx = ctx; return create(ctx); }
+// 便8（§5d）: Sheet詳細の「原典を見る」から原典タブ＋該当ファイルへ遷移するフックを ctx に公開（cross-module）。
+function installOpenOrigin(ctx) { ctx.openOrigin = (sub) => { switchMode(ctx, 'origins'); openOriginFile(ctx, sub); }; }
+function onShowWrap(ctx) { currentCtx = ctx; installOpenOrigin(ctx); onShow(ctx); }
+function createWrap(ctx) { currentCtx = ctx; installOpenOrigin(ctx); return create(ctx); }
 
 registerView({ id: 'views', tabLabel: 'Views', create: createWrap, onShow: onShowWrap });

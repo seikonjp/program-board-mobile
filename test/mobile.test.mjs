@@ -2574,7 +2574,7 @@ test('㋒(便7) build number in index.html matches sw.js CACHE version', () => {
   assert.ok(bm, 'index.html に build 番号');
   assert.ok(cm, 'sw.js に pbm-shell-v 版数');
   assert.strictEqual(bm[1], cm[1], 'build 表記(' + bm[1] + ') と sw CACHE 版数(' + cm[1] + ') が一致');
-  assert.strictEqual(bm[1], '37', '本便=build 37（便7.1・parser.js変更のためbump）');
+  assert.strictEqual(bm[1], '38', '本便=build 38（便8・parser.js/program.js変更のためbump）');
 });
 
 // ㋓(便7) 実データ受入: SC-F_PL_AP_ENTP 全25ケースに生ラベル・行頭bullet・遊離**が残らない
@@ -2657,4 +2657,79 @@ test('㋕(便7.1) real SC-F_PL_AP_ENTP: impl-status text collapses 不明 (befor
   assert.strictEqual(implSrc, 25, '全25が実装状態テキスト由来');
   assert.ok(hasDepName, '未実装×前提待ち→他機能の実装待ち（傾斜敷地作成）が実データで成立');
   assert.ok(head['実装済み'] >= 10 && head['実装可'] >= 1 && head['追加実装が必要'] >= 1, '実装済み多数＋実装可（未着手）＋追加実装が必要');
+});
+
+// ===========================================================================
+// 便8（build 38・§5d）: 変換キャッシュ表示層（4状態）＋md記号ゼロ＋純関数（Mac server.js と挙動互換）
+// ===========================================================================
+import { createHash } from 'node:crypto';
+
+const SCEN8 = `# SC-F_XX 【機能】YY
+
+## ケース表
+
+### 正常系
+- [ ] **CASE-01 あるべき体験（正常系）**
+  - 起きること: 機械抽出の説明
+  - **実装**（統合欄）:
+    - 状態: 実装済み
+`;
+
+// 便8-A resolveTransform: fresh/stale/absent + docHash欠落=stale
+test('便8-A(build38) resolveTransform: fresh/stale/absent + missing docHash → stale', () => {
+  const j = { docHash: 'H', docSummary: '何を承認するのか', cases: { 'CASE-01': { fields: {} } }, blocks: { '見出し': '要約' } };
+  assert.strictEqual(P.resolveTransform(j, 'H').state, 'fresh');
+  assert.strictEqual(P.resolveTransform(j, 'OTHER').state, 'stale');
+  assert.strictEqual(P.resolveTransform(null, 'H').state, 'absent');
+  assert.strictEqual(P.resolveTransform({ cases: {} }, 'H').state, 'stale', 'docHash欠落=stale（機械抽出へ）');
+});
+
+// 便8-B md記号ゼロ: stripInlineMdNoise + scrubTransformText（Mac と同一の可視テキスト）
+test('便8-B(build38) md記号ゼロ: stripInlineMdNoise + scrubTransformText', () => {
+  for (const s of ['**強調**と`x`と残**り`', '内容: - **前提**A `y`', '`code`だけ', '普通の文']) {
+    const out = P.stripInlineMdNoise(s);
+    assert.ok(!/\*\*/.test(out) && !/`/.test(out), 'md記号が残らない: ' + JSON.stringify(out));
+  }
+  assert.strictEqual(P.scrubTransformText('- 内容: あるべき体験'), 'あるべき体験');
+  assert.strictEqual(P.scrubTransformText('**そのまま**の太字'), '**そのまま**の太字', 'インライン太字は保持');
+  assert.ok(!/\*\*|`/.test(P.stripInlineMdNoise(P.scrubTransformText('- 内容: **強調**と`x`'))), '合成経路でmd記号ゼロ');
+});
+
+// 便8-C applyCaseTransform: fresh差し込み・非freshは不変
+test('便8-C(build38) applyCaseTransform: fresh injects; non-fresh unchanged', () => {
+  const mk = () => P.parseCaseFields('- [ ] **CASE-01 x**\n  - 起きること: 機械抽出の説明\n  - **実装**（統合欄）:\n    - 状態: 実装済み\n', null);
+  const cases = { 'CASE-01': { fields: { status_note: '承認後すぐ実装できる', content: '標準敷地で玄関が道路側に出る', conditions: ['選択肢巡回あり'], observations: ['候補数は実行時に判明'], completion: '画像（巡回シート）', quality: 'QS-ENT-03（道路に面する）' } } };
+  const cf = P.applyCaseTransform(mk(), { state: 'fresh', cases }, 'CASE-01');
+  assert.strictEqual(cf.statusNote, '承認後すぐ実装できる');
+  const byKey = {}; cf.sections.forEach((s) => { byKey[s.key] = s; });
+  assert.deepStrictEqual((byKey.content.display || []).map((u) => u.text), ['標準敷地で玄関が道路側に出る', '選択肢巡回あり', '候補数は実行時に判明']);
+  assert.strictEqual(byKey.completion.display[0].text, '画像（巡回シート）');
+  assert.strictEqual(byKey.quality.display[0].text, 'QS-ENT-03（道路に面する）', '品質基準IDは保持');
+  const cfStale = P.applyCaseTransform(mk(), { state: 'stale', cases }, 'CASE-01');
+  assert.strictEqual(cfStale.statusNote, undefined, 'stale は差し込まない');
+});
+
+// 便8-D sheetPayload 4状態（fresh/stale/absent）＋旧様式signal（frontmatter有無＝Mac legacyFormat の駆動源）
+test('便8-D(build38) sheetPayload transformState: fresh/stale/absent + frontmatter drives legacyFormat', () => {
+  const docHash = createHash('sha256').update(SCEN8, 'utf8').digest('hex');
+  const cache = { docHash, docSummary: '玄関配置のケースを承認する', cases: { 'CASE-01': { fields: { content: '平易な説明文' } } } };
+  // fresh
+  let pay = P.sheetPayload(SCEN8, false, null, { transform: cache, docHash });
+  assert.strictEqual(pay.transformState, 'fresh');
+  assert.strictEqual(pay.docSummary, '玄関配置のケースを承認する');
+  const c1 = pay.blocks.find((b) => b.kind === 'case');
+  assert.strictEqual((c1.caseFields.sections.find((s) => s.key === 'content').display || [])[0].text, '平易な説明文', 'fresh はケースへ差し込む');
+  // stale（docHash不一致）
+  pay = P.sheetPayload(SCEN8, false, null, { transform: cache, docHash: 'MISMATCH' });
+  assert.strictEqual(pay.transformState, 'stale');
+  assert.strictEqual(pay.docSummary, '玄関配置のケースを承認する', 'stale は古いdocSummary（＋UIでstaleバッジ）');
+  const c2 = pay.blocks.find((b) => b.kind === 'case');
+  assert.ok(!(c2.caseFields.sections.find((s) => s.key === 'content') || {}).fromTransform, 'stale は差し込まない');
+  // absent（transform無し）
+  pay = P.sheetPayload(SCEN8, false, null, { transform: null, docHash });
+  assert.strictEqual(pay.transformState, 'absent');
+  assert.strictEqual(pay.docSummary, null, 'absent は docSummary=null（UIは「簡潔化 未生成」）');
+  // 旧様式signal: frontmatterなし＝legacyFormat の駆動源（program.js が behaviors/completion に対して付与）
+  assert.strictEqual(P.parseSheetMeta(SCEN8).hasFrontmatter, false, 'frontmatterなし→legacyFormat=true の駆動源');
+  assert.strictEqual(P.parseSheetMeta('---\nstate: draft\n---\n# x\n').hasFrontmatter, true, 'frontmatterあり→新様式扱い');
 });

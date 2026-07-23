@@ -542,12 +542,37 @@ export function createProgram(dropbox, config) {
     if (!source) throw new Error('不明なソース: ' + sourceId);
     sheetAssertFile(source, file);
     const { text } = await dropbox.download(join(sheetBase(source), file));
-    const payload = { source: sourceId, file, ...P.sheetPayload(text, !!source.numbered) };
+    // 便8（§5d）: 原典 sha256（SubtleCrypto・async）を計算し、変換キャッシュ（Dropbox読み）を docHash 照合。
+    const docHash = await sha256HexSafe(text);
+    const transform = await loadTransform(sourceId, file);
+    const payload = { source: sourceId, file, ...P.sheetPayload(text, !!source.numbered, null, { transform, docHash }) };
+    // 便8: 判断対象のみ表示の材料。originSub=Views>Library原典リンク先／legacyFormat=旧様式バナー（新様式は frontmatter 必須）。
+    payload.originSub = source.sub + '/' + file;
+    payload.legacyFormat = (sourceId === 'behaviors' || sourceId === 'completion') && !(payload.meta && payload.meta.hasFrontmatter);
     // 便3（§3）: D-2/D-3/D-4 の中核データを添付（背骨=汎用ブロックはそのまま・中核のみ差し替え）。
     if (sourceId === 'behaviors') payload.behaviors = P.parseBehaviorDoc(text).behaviors;
     if (sourceId === 'completion') payload.testPlan = P.parseTestPlan(text);
     if (sourceId === 'testreport') payload.report = P.parseTestReport(text);
     return payload;
+  }
+
+  // 便8（§5d）: 原典全文の sha256（SubtleCrypto）。非対応環境（非セキュアコンテキスト等）は null で無事故（→変換は stale/absent 扱い）。
+  async function sha256HexSafe(text) {
+    try {
+      const enc = new TextEncoder().encode(String(text == null ? '' : text));
+      const buf = await crypto.subtle.digest('SHA-256', enc);
+      return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('');
+    } catch { return null; }
+  }
+  // 変換キャッシュ（Program/data/transforms/〈sourceId〉/〈basename〉.json）を Dropbox から読む。未存在/壊れは null（無事故）。
+  async function loadTransform(sourceId, file) {
+    if (!config.transformsSub) return null;
+    const base = basename(String(file || '')).replace(/\.md$/i, '');
+    if (!base) return null;
+    try {
+      const { text } = await dropbox.download(join(archplanRoot, config.transformsSub, sourceId, base + '.json'));
+      return JSON.parse(text);
+    } catch { return null; }
   }
 
   // 項目直下へ💬コメント追記（updateTextFileWithRetry＝rev 楽観ロック・他部分は byte 不変）。
