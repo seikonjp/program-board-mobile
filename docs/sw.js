@@ -4,7 +4,7 @@
 // データ（Dropbox API 応答）は一切キャッシュしない＝常に最新をネットワークから取得。
 // オフライン時の閲覧は app 側が localStorage に保持した最終取得データで行う。
 
-const CACHE = 'pbm-shell-v40';
+const CACHE = 'pbm-shell-v41';
 
 const SHELL = [
   './',
@@ -32,6 +32,9 @@ const SHELL = [
   './views/views.js',
   './views/sessions.js',
   './views/projects.js',
+  // フロー2ビューの焼き込みペイロード（便10+11・ビルド時生成の静的JSON）。
+  './data/flow-view.json',
+  './data/flow-overview.json',
   './icons/icon-192.png',
   './icons/icon-512.png',
 ];

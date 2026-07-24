@@ -2576,7 +2576,7 @@ test('㋒(便7) build number in index.html matches sw.js CACHE version', () => {
   assert.ok(bm, 'index.html に build 番号');
   assert.ok(cm, 'sw.js に pbm-shell-v 版数');
   assert.strictEqual(bm[1], cm[1], 'build 表記(' + bm[1] + ') と sw CACHE 版数(' + cm[1] + ') が一致');
-  assert.strictEqual(bm[1], '40', '本便=build 40（便9・Projectsタブ）');
+  assert.strictEqual(bm[1], '41', '本便=build 41（便10+11・フロー俯瞰／直近の詳細の移植）');
 });
 
 // ㋓(便7) 実データ受入: SC-F_PL_AP_ENTP 全25ケースに生ラベル・行頭bullet・遊離**が残らない
@@ -2829,4 +2829,54 @@ test('便9 real data: CENSUS_B parses to 45 projects + 5 reviews, no breakage (b
   assert.strictEqual(r.counts.reviews, 5, '§1b=Review5');
   assert.strictEqual(r.malformed.length, 0, 'parse崩れなし');
   assert.ok(r.counts.residualItems > 200, '§2残作業が多数結合（実測279）');
+});
+
+// ---------------------------------------------------------------------------
+// 便10+11（build 41）作業フロービュー: 焼き込み静的ペイロードの契約＋program配線
+//   フローの導出は Mac版 server.js の純関数（Mac側121本で検証）。モバイルはそれを
+//   scripts/build-flow.cjs で焼き込んだ docs/data/*.json を読むだけ。ここではその
+//   ペイロード契約（レンダラが依存するキー・収支不変条件）と program 配線を最小検証する。
+// ---------------------------------------------------------------------------
+function readBaked(name) {
+  try { return JSON.parse(readFileSync(resolve(HERE, '..', 'docs', 'data', name), 'utf8')); }
+  catch { return null; } // 未ビルド環境では skip 扱い（実データ非依存）
+}
+
+test('便11 焼き込み flow-overview.json: 全数配置・未分類0・棚キー・行チップ（build 41）', () => {
+  const p = readBaked('flow-overview.json');
+  if (!p) return; // ビルド前ならskip
+  assert.ok(p.builtAt, 'builtAt（焼き込み時刻）を持つ＝静的の明示');
+  const b = p.balance || {};
+  assert.strictEqual(b.total, b.shown, '全対象＝表示（放置ゼロ）');
+  assert.strictEqual(b.unclassified, 0, '未分類0が正常（棚規則の網羅）');
+  assert.strictEqual(b.registry + b.inventory, b.total, '収支=登記簿＋機能外目録');
+  assert.ok(Array.isArray(p.shelves) && p.shelves.length > 0, '棚配列');
+  const keys = p.shelves.map((s) => s.key);
+  for (const k of ['firstline', 'review', 'parallel', 'waiting', 'future', 'done', 'unclassified']) {
+    assert.ok(keys.includes(k), '棚キー: ' + k);
+  }
+  const uncl = p.shelves.find((s) => s.key === 'unclassified');
+  assert.strictEqual(uncl.count, 0, '未分類棚は0件');
+  // 任意の1行がレンダラの依存キーを持つ（state/color/label＋シナリオ状態チップ）。
+  const anyItem = (p.shelves.find((s) => s.count > 0).groups[0].items[0]);
+  assert.ok(anyItem && anyItem.state && anyItem.color, '行は state/color を持つ');
+  assert.ok(anyItem.scenario && anyItem.scenario.cls, '行はシナリオ状態チップ（cls）を持つ');
+});
+
+test('便10 焼き込み flow-view.json: 第一線の柱＋分布＋出典（build 41）', () => {
+  const p = readBaked('flow-view.json');
+  if (!p) return; // ビルド前ならskip
+  assert.ok(p.builtAt, 'builtAt を持つ');
+  assert.ok(p.firstLine && Array.isArray(p.firstLine.pillars) && p.firstLine.pillars.length > 0, '第一線の柱');
+  assert.strictEqual(typeof p.dist, 'object', '状態分布');
+  assert.ok(p.sourcesOk && typeof p.sourcesOk.edges === 'boolean', 'データ健全性（依存地図）');
+  // 柱の項目はレンダラ依存キー（state/label）を持つ。
+  const items = p.firstLine.pillars.flatMap((pl) => pl.items || []);
+  assert.ok(items.length > 0 && items[0].state, '柱の項目は state を持つ');
+});
+
+test('便10+11 program 配線: loadFlowView / loadFlowOverview が公開されている（build 41）', () => {
+  const { program } = mockProgram({});
+  assert.strictEqual(typeof program.loadFlowView, 'function', 'loadFlowView 公開');
+  assert.strictEqual(typeof program.loadFlowOverview, 'function', 'loadFlowOverview 公開');
 });

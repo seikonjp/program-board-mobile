@@ -1,8 +1,11 @@
 'use strict';
 
-// views/progressboard.js — 進捗タブ（便5・build 34・独立タブ・SPEC_V3 §5・PROGRESS_TAB_UI_DRAFT）。
-// 進捗リスト（機能＞実装単位＞CASEグループの3層）＋作業順序リスト（=CASEグループ・チェックリスト）。
-// 表示は全て program.loadProgressBoard() の機械導出（手書きしない）。読み取り専用（正本へ書かない）。
+// views/progressboard.js — 進捗タブ（便5・build 34／便10+11・build 41・独立タブ・SPEC_V3 §5/§5f/§5g）。
+// 3切替: 状態マップ（機能＞実装単位＞CASEグループ＋作業順序リスト）／フロー俯瞰（全数配置・放置ゼロ）／
+//         直近の詳細（第一線の背骨→並走枠→将来領域）。状態マップは program.loadProgressBoard() の機械導出。
+// フロー俯瞰・直近の詳細は、ビルド時に焼き込んだ静的ペイロード（program.loadFlowOverview/loadFlowView）を読むだけ
+//   （Mac版と同じ純関数の機械導出＝手書きしない・245KBのcensus生データはモバイルへ運ばない）。読み取り専用。
+//   静的のため、台帳更新後は scripts/build-flow.cjs を再実行して反映（builtAt に焼き込み時刻を明示）。
 
 import { registerView } from '../registry.js';
 import { h } from './shared.js';
@@ -19,14 +22,44 @@ const PB_WORK_MARK = {
   done:    { glyph: '☑' }, running: { glyph: '▶' }, ready: { glyph: '☐' }, todo: { glyph: '☐' }, blocked: { glyph: '⏸' },
 };
 
+// 作業フロービュー（便10+11・Mac版と同一語彙）。状態6色＋シナリオ状態チップの色分け。凡例に新記号は増やさない。
+const FLOW_STATE = {
+  startable:  { name: '出発可能',     cls: 'flow-green' },
+  waiting:    { name: '待ち',         cls: 'flow-gray' },
+  review:     { name: '検討中・調査', cls: 'flow-yellow' },
+  inprogress: { name: '進行中',       cls: 'flow-blue' },
+  declared:   { name: '予定',         cls: 'flow-declared' },
+  done:       { name: '完了',         cls: 'flow-green' },
+  unknown:    { name: '不明',         cls: 'flow-unknown' },
+};
+const FLOW_STATE_ORDER = ['startable', 'waiting', 'review', 'inprogress', 'declared', 'done', 'unknown'];
+const SCEN_CLS = { 'scen-approved': 'scen-approved', 'scen-progress': 'scen-progress', 'scen-created': 'scen-created', 'scen-legacy': 'scen-legacy', 'scen-none': 'scen-none', 'scen-na': 'scen-na' };
+
 let currentCtx = null;
 let root, noteEl, distEl, searchEl, listEl, workEl, popupBack, popupEl, miniEl;
+let mapWrap, overviewWrap, flowWrap;
 let data = null;
 let expanded = new Set();
+let pbview = 'map';
+let flowData = null;      // 直近の詳細（/data/flow-view.json）
+let overviewData = null;  // フロー俯瞰（/data/flow-overview.json）
 
 function create(ctx) {
   currentCtx = ctx;
   root = h('div', 'pb-root');
+
+  // 進捗まわりの切替（状態マップ／フロー俯瞰／直近の詳細）——Mac版に揃える。
+  const switchBar = h('div', 'pb-switch');
+  for (const [key, label] of [['map', '状態マップ'], ['overview', 'フロー俯瞰'], ['flow', '直近の詳細']]) {
+    const b = h('button', 'pb-switch-btn' + (key === pbview ? ' is-active' : ''), label);
+    b.dataset.pbview = key;
+    b.onclick = () => setPbView(key);
+    switchBar.appendChild(b);
+  }
+  root.appendChild(switchBar);
+
+  // 状態マップ（既存＝進捗リスト＋作業順序リスト）を1枠にまとめる。
+  mapWrap = h('div', 'pb-mapwrap');
   const toolbar = h('div', 'pb-toolbar');
   searchEl = h('input', 'field pb-search');
   searchEl.type = 'search'; searchEl.placeholder = '機能・実装単位ID・名称で検索';
@@ -34,24 +67,33 @@ function create(ctx) {
   toolbar.appendChild(searchEl);
   distEl = h('div', 'pb-dist');
   toolbar.appendChild(distEl);
-  root.appendChild(toolbar);
+  mapWrap.appendChild(toolbar);
   noteEl = h('p', 'pb-note view-hint');
-  root.appendChild(noteEl);
+  mapWrap.appendChild(noteEl);
 
   const progTitle = h('h3', 'pb-col-title');
   progTitle.appendChild(h('span', null, '進捗リスト'));
   progTitle.appendChild(h('span', 'pb-col-sub', '状態の地図（機能＞実装単位＞CASEグループ）'));
-  root.appendChild(progTitle);
+  mapWrap.appendChild(progTitle);
   listEl = h('div', 'pb-list');
   listEl.textContent = '読み込み中…';
-  root.appendChild(listEl);
+  mapWrap.appendChild(listEl);
 
   const workTitle = h('h3', 'pb-col-title');
   workTitle.appendChild(h('span', null, '作業順序リスト'));
   workTitle.appendChild(h('span', 'pb-col-sub', '運転計画（=CASEグループ・完了は保持）'));
-  root.appendChild(workTitle);
+  mapWrap.appendChild(workTitle);
   workEl = h('div', 'pb-worklist');
-  root.appendChild(workEl);
+  mapWrap.appendChild(workEl);
+  root.appendChild(mapWrap);
+
+  // フロー俯瞰・直近の詳細（切替時に読み込み）。
+  overviewWrap = h('div', 'pb-flowwrap');
+  overviewWrap.hidden = true;
+  root.appendChild(overviewWrap);
+  flowWrap = h('div', 'pb-flowwrap');
+  flowWrap.hidden = true;
+  root.appendChild(flowWrap);
 
   // ポップアップ（詳細7区画）＋ミニ
   popupBack = h('div', 'pb-popup-backdrop');
@@ -316,6 +358,269 @@ function jumpScenario(code) {
 function jumpCompletion(file) {
   if (!currentCtx || !currentCtx.openSheet) return;
   currentCtx.openSheet('completion', file);
+}
+
+// ====== 作業フロービュー（便10+11・SPEC_V3 §5f/§5g・静的ペイロード読取り） ======
+
+// 進捗タブ内の切替（状態マップ／フロー俯瞰／直近の詳細）。フローは初回切替時に読み込む。
+function setPbView(view) {
+  pbview = view;
+  if (root) root.querySelectorAll('.pb-switch-btn').forEach((b) => b.classList.toggle('is-active', b.dataset.pbview === view));
+  if (mapWrap) mapWrap.hidden = view !== 'map';
+  if (overviewWrap) overviewWrap.hidden = view !== 'overview';
+  if (flowWrap) flowWrap.hidden = view !== 'flow';
+  if (miniEl) miniEl.hidden = true;
+  if (view === 'overview') { if (!overviewData) loadOverview(); else renderFlowOverview(); }
+  if (view === 'flow') { if (!flowData) loadDetail(); else renderFlowView(); }
+}
+
+async function loadDetail() {
+  flowWrap.textContent = '読み込み中…';
+  try { flowData = await currentCtx.program.loadFlowView(); renderFlowView(); }
+  catch (e) { flowWrap.innerHTML = ''; flowWrap.appendChild(h('p', 'view-hint', '直近の詳細の読み込みに失敗: ' + (e.message || e))); }
+}
+async function loadOverview() {
+  overviewWrap.textContent = '読み込み中…';
+  try { overviewData = await currentCtx.program.loadFlowOverview(); renderFlowOverview(); }
+  catch (e) { overviewWrap.innerHTML = ''; overviewWrap.appendChild(h('p', 'view-hint', 'フロー俯瞰の読み込みに失敗: ' + (e.message || e))); }
+}
+
+function flowMeta(state) { return FLOW_STATE[state] || FLOW_STATE.unknown; }
+
+// 焼き込み時刻の注記（静的のため台帳更新後は再ビルドで反映）。
+function builtNote(p) {
+  let stamp = '不明';
+  if (p && p.builtAt) { try { stamp = new Date(p.builtAt).toLocaleString('ja-JP', { hour12: false }); } catch { stamp = String(p.builtAt); } }
+  return h('div', 'flow-built', 'この表示は ' + stamp + ' 時点の焼き込み（台帳更新後は再ビルドで反映）');
+}
+
+// 状態ミニポップアップ（miniEl 共用・なぜ＋何待ちか）。
+function openFlowMini(it, anchor) {
+  if (!miniEl) return;
+  miniEl.innerHTML = '';
+  const m = flowMeta(it.state);
+  miniEl.appendChild(h('div', 'pb-mini-state ' + m.cls, it.stateLabel || m.name));
+  const mm = it.mini || {};
+  if (mm.why) miniEl.appendChild(h('div', 'pb-mini-why', 'なぜ: ' + mm.why));
+  for (const dl of (mm.depLines || [])) miniEl.appendChild(h('div', 'pb-mini-edge', '待ち: ' + dl));
+  if (it.ref) miniEl.appendChild(h('div', 'pb-mini-edge', '台帳: ' + it.ref));
+  const r = anchor.getBoundingClientRect();
+  miniEl.style.left = Math.min(r.left, window.innerWidth - 300) + 'px';
+  miniEl.style.top = (r.bottom + 4) + 'px';
+  miniEl.hidden = false;
+}
+
+function flowStateChip(it) {
+  const m = flowMeta(it.state);
+  const chip = h('span', 'flow-chip ' + m.cls, it.stateLabel || m.name);
+  if (it.mini && (it.mini.why || (it.mini.depLines && it.mini.depLines.length))) {
+    chip.classList.add('is-click');
+    chip.onclick = (e) => { e.stopPropagation(); openFlowMini(it, chip); };
+  }
+  return chip;
+}
+function flowScenChip(sc) {
+  if (!sc) return null;
+  const chip = h('span', 'scen-chip ' + (SCEN_CLS[sc.cls] || 'scen-na'), sc.label);
+  if (sc.why) { chip.classList.add('is-click'); chip.onclick = (e) => { e.stopPropagation(); openFlowMini({ state: 'declared', stateLabel: sc.label, mini: { why: sc.why } }, chip); }; }
+  return chip;
+}
+// 対象ページ直行（モバイルは Sheets 群へ切替＝jumpScenario と同方式）。
+function flowSheetLink(link, label) {
+  const lk = h('span', 'flow-link', '📋');
+  lk.title = label;
+  lk.onclick = (e) => { e.stopPropagation(); if (currentCtx && currentCtx.openSheet) currentCtx.openSheet(link.type, link.file); };
+  return lk;
+}
+
+// 直近の詳細の1項目（状態チップ＋シナリオ状態＋平易名＋種類/ID＋台帳＋Sheetリンク）。
+function flowItemRow(it) {
+  const row = h('div', 'flow-item flow-item-' + it.state);
+  row.appendChild(flowStateChip(it));
+  const sc = flowScenChip(it.scenario); if (sc) row.appendChild(sc);
+  const body = h('span', 'flow-item-body');
+  body.appendChild(h('span', 'flow-item-label', it.label || it.name || it.code || ''));
+  const meta = h('span', 'flow-item-meta');
+  if (it.kind) meta.appendChild(h('span', 'flow-kind', it.kind));
+  if (it.code) meta.appendChild(h('span', 'flow-code', it.code));
+  if (it.ref) meta.appendChild(h('span', 'flow-ref', '台帳: ' + it.ref));
+  body.appendChild(meta);
+  row.appendChild(body);
+  if (it.link && it.link.file && (it.link.type === 'scenario' || it.link.type === 'completion')) {
+    row.appendChild(flowSheetLink(it.link, it.link.type === 'scenario' ? 'シナリオへ' : '完成定義へ'));
+  }
+  return row;
+}
+
+function renderFlowView() {
+  const p = flowData;
+  if (!flowWrap) return;
+  flowWrap.innerHTML = '';
+  if (!p) { flowWrap.textContent = '読み込み中…'; return; }
+  const head = h('div', 'flow-head');
+  head.appendChild(h('div', 'flow-title', (p.meta && p.meta.title) || '作業フロー'));
+  if (p.meta && p.meta.subtitle) head.appendChild(h('div', 'flow-sub', p.meta.subtitle));
+  const dist = h('div', 'flow-dist');
+  for (const k of FLOW_STATE_ORDER) { const n = (p.dist || {})[k] || 0; if (!n) continue; dist.appendChild(h('span', 'flow-chip ' + flowMeta(k).cls, flowMeta(k).name + ' ' + n)); }
+  head.appendChild(dist);
+  if (!p.sourcesOk || !p.sourcesOk.edges) head.appendChild(h('div', 'view-hint', '依存地図が読めないため状態は「不明」表示です。'));
+  head.appendChild(builtNote(p));
+  flowWrap.appendChild(head);
+
+  // 段1: 第一線（柱＋調査枠）
+  const s1 = h('div', 'flow-stage');
+  s1.appendChild(h('h3', 'flow-stage-title', (p.firstLine && p.firstLine.title) || '第一線の背骨'));
+  if (p.firstLine && p.firstLine.note) s1.appendChild(h('p', 'flow-stage-note', p.firstLine.note));
+  const pillarsWrap = h('div', 'flow-pillars');
+  for (const pl of (p.firstLine && p.firstLine.pillars) || []) {
+    const col = h('div', 'flow-pillar');
+    const ph = h('div', 'flow-pillar-head');
+    ph.appendChild(h('span', 'flow-pillar-title', pl.title));
+    if (pl.serial) ph.appendChild(h('span', 'flow-serial', '順に進める'));
+    col.appendChild(ph);
+    if (pl.note) col.appendChild(h('div', 'flow-pillar-note', pl.note));
+    const list = h('div', 'flow-item-list' + (pl.serial ? ' is-serial' : ''));
+    (pl.items || []).forEach((it, i) => {
+      if (pl.serial && i > 0) list.appendChild(h('div', 'flow-arrow', '↓'));
+      list.appendChild(flowItemRow(it));
+    });
+    col.appendChild(list);
+    pillarsWrap.appendChild(col);
+  }
+  s1.appendChild(pillarsWrap);
+  const inv = p.firstLine && p.firstLine.investigation;
+  if (inv) {
+    const invWrap = h('div', 'flow-investigation');
+    invWrap.appendChild(h('div', 'flow-pillar-title', inv.title));
+    if (inv.note) invWrap.appendChild(h('div', 'flow-pillar-note', inv.note));
+    const list = h('div', 'flow-item-list flow-inv-list');
+    (inv.items || []).forEach((it) => list.appendChild(flowItemRow(it)));
+    invWrap.appendChild(list);
+    s1.appendChild(invWrap);
+  }
+  flowWrap.appendChild(s1);
+
+  // 段2: 並走枠
+  if (p.parallel) {
+    const s2 = h('div', 'flow-stage flow-parallel');
+    s2.appendChild(h('h3', 'flow-stage-title', p.parallel.title));
+    if (p.parallel.note) s2.appendChild(h('p', 'flow-stage-note', p.parallel.note));
+    const ul = h('ul', 'flow-parallel-list');
+    (p.parallel.items || []).forEach((t) => ul.appendChild(h('li', null, t)));
+    s2.appendChild(ul);
+    flowWrap.appendChild(s2);
+  }
+
+  // 段3: 将来領域（表）
+  if (p.future) {
+    const s3 = h('div', 'flow-stage flow-future');
+    s3.appendChild(h('h3', 'flow-stage-title', p.future.title));
+    if (p.future.note) s3.appendChild(h('p', 'flow-stage-note', p.future.note));
+    const tableWrap = h('div', 'flow-table-scroll');
+    const table = h('table', 'flow-future-table');
+    const thead = h('tr');
+    ['領域', 'いまやること', '再開の条件'].forEach((hh) => thead.appendChild(h('th', null, hh)));
+    table.appendChild(thead);
+    (p.future.rows || []).forEach((r) => {
+      const tr = h('tr');
+      tr.appendChild(h('td', 'flow-future-area', r.area));
+      tr.appendChild(h('td', null, r.now));
+      tr.appendChild(h('td', null, r.resume));
+      table.appendChild(tr);
+    });
+    tableWrap.appendChild(table);
+    s3.appendChild(tableWrap);
+    flowWrap.appendChild(s3);
+  }
+}
+
+// ====== フロー俯瞰（便11・全対象を棚へ配置・放置ゼロ・未分類0が正常） ======
+// 状態マップに当該機能が載っているか（相互ジャンプの壊れリンク回避）。
+function flowStateMapFeatures() {
+  const set = new Set();
+  if (data && Array.isArray(data.features)) for (const f of data.features) { if (f.code) set.add(f.code); }
+  return set;
+}
+// フロー俯瞰から状態マップへ切替＆当該機能で絞り込み（既存の検索フィルタを利用）。
+function flowJumpToMap(featureCode) {
+  if (searchEl) searchEl.value = featureCode;
+  setPbView('map');
+  if (data) render();
+  if (mapWrap && mapWrap.scrollIntoView) mapWrap.scrollIntoView({ block: 'start', behavior: 'smooth' });
+}
+
+// フロー俯瞰の1行（実装状態＋シナリオ状態の2チップ・平易名・系統/ID・Sheetリンク・状態マップ相互ジャンプ）。
+function flowOvRow(it, mapFeats) {
+  const row = h('div', 'flow-ov-row flow-item flow-item-' + it.state);
+  const chips = h('span', 'flow-ov-chips');
+  chips.appendChild(flowStateChip(it));
+  const sc = flowScenChip(it.scenario); if (sc) chips.appendChild(sc);
+  if (it.legacyDone) {
+    const lg = h('span', 'legacy-done-chip', it.legacyChip || '旧方式での完成・新方式での再確認待ち');
+    lg.title = '旧方式で完成した扱いだが、新方式での再確認（精査）待ち。精査確定までは完了棚には正式計上しない。';
+    chips.appendChild(lg);
+  }
+  row.appendChild(chips);
+  const body = h('span', 'flow-item-body');
+  body.appendChild(h('span', 'flow-item-label', it.label || it.name || it.code || ''));
+  const meta = h('span', 'flow-item-meta');
+  if (it.kind) meta.appendChild(h('span', 'flow-kind', it.kind));
+  if (it.code) meta.appendChild(h('span', 'flow-code', it.code));
+  if (it.origin === 'inventory') meta.appendChild(h('span', 'flow-ref', '目録'));
+  if (it.ref) meta.appendChild(h('span', 'flow-ref', it.ref.length > 40 ? it.ref.slice(0, 40) + '…' : it.ref));
+  body.appendChild(meta);
+  row.appendChild(body);
+  if (it.link && it.link.file && it.link.type === 'scenario') row.appendChild(flowSheetLink(it.link, 'シナリオ（ケース表）へ'));
+  if (it.stateMapKey && mapFeats && mapFeats.has(it.stateMapKey)) {
+    const jp = h('span', 'flow-link flow-mapjump', '↔');
+    jp.title = '状態マップの該当機能へ';
+    jp.onclick = (e) => { e.stopPropagation(); flowJumpToMap(it.stateMapKey); };
+    row.appendChild(jp);
+  }
+  return row;
+}
+
+function renderFlowOverview() {
+  const p = overviewData;
+  if (!overviewWrap) return;
+  overviewWrap.innerHTML = '';
+  if (!p) { overviewWrap.textContent = '読み込み中…'; return; }
+  const mapFeats = flowStateMapFeatures();
+  const head = h('div', 'flow-head');
+  head.appendChild(h('div', 'flow-title', (p.meta && p.meta.title) || 'フロー俯瞰'));
+  if (p.meta && p.meta.subtitle) head.appendChild(h('div', 'flow-sub', p.meta.subtitle));
+  const b = p.balance || {};
+  const bal = h('div', 'flow-balance' + (b.unclassified ? ' is-bad' : ''));
+  bal.appendChild(h('span', 'flow-bal-main', '全対象 ' + (b.total || 0) + '件 ＝ 表示 ' + (b.shown || 0) + '件・未分類 ' + (b.unclassified || 0) + '件'));
+  bal.appendChild(h('span', 'flow-bal-sub', '（登記簿 ' + (b.registry || 0) + '＋機能外目録 ' + (b.inventory || 0) + '）'));
+  head.appendChild(bal);
+  if (!p.sourcesOk || !p.sourcesOk.edges) head.appendChild(h('div', 'view-hint', '依存地図が読めないため状態は「不明」表示です。'));
+  if (!p.sourcesOk || !p.sourcesOk.inventory) head.appendChild(h('div', 'view-hint', '機能外タスク目録が読めないため独立タスクは非表示です。'));
+  head.appendChild(builtNote(p));
+  overviewWrap.appendChild(head);
+
+  for (const shelf of (p.shelves || [])) {
+    if (shelf.key === 'unclassified' && shelf.count === 0) continue; // 0件が正常＝出さない
+    const sec = h('div', 'flow-shelf flow-shelf-' + shelf.key + (shelf.key === 'unclassified' ? ' is-bad' : ''));
+    const sh = h('div', 'flow-shelf-head');
+    sh.appendChild(h('span', 'flow-shelf-title', shelf.title));
+    sh.appendChild(h('span', 'flow-shelf-count', shelf.count + '件'));
+    sec.appendChild(sh);
+    if (shelf.note) sec.appendChild(h('div', 'flow-shelf-note', shelf.note));
+    if (shelf.count === 0) { sec.appendChild(h('div', 'flow-shelf-empty', '該当なし。')); overviewWrap.appendChild(sec); continue; }
+    for (const g of (shelf.groups || [])) {
+      const grp = h('div', 'flow-sysgroup');
+      const gh = h('div', 'flow-sysgroup-head');
+      gh.appendChild(h('span', 'flow-sysgroup-title', g.title));
+      gh.appendChild(h('span', 'flow-sysgroup-count', g.count + '件'));
+      grp.appendChild(gh);
+      const list = h('div', 'flow-item-list');
+      for (const it of (g.items || [])) list.appendChild(flowOvRow(it, mapFeats));
+      grp.appendChild(list);
+      sec.appendChild(grp);
+    }
+    overviewWrap.appendChild(sec);
+  }
 }
 
 registerView({ id: 'progressboard', tabLabel: '進捗', create, onShow });

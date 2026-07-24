@@ -699,6 +699,20 @@ export function createProgram(dropbox, config) {
     };
   }
 
+  // 作業フロービュー（フロー俯瞰・直近の詳細）: ビルド時に焼き込んだ静的ペイロードを読むだけ。
+  //   モバイルは 245KB の census 生データ・重い純関数を運ばない＝導出済みの小さなJSONを fetch する
+  //   （生成は scripts/build-flow.cjs が Mac 版 server.js の純関数で実行）。同一オリジンの静的ファイル。
+  //   静的のため、台帳更新後はビルド再実行で反映（builtAt に焼き込み時刻）。未存在/壊れは throw（正直表示）。
+  async function loadStaticJson(rel) {
+    // program.js（docs/直下）基準の相対解決＝配信パスの深さに依存しない。
+    const url = new URL(rel, import.meta.url);
+    const res = await fetch(url, { cache: 'no-cache' });
+    if (!res || !res.ok) throw new Error('静的ペイロードを読めません: ' + rel + '（' + (res ? res.status : 'no-response') + '）');
+    return res.json();
+  }
+  function loadFlowView() { return loadStaticJson('./data/flow-view.json'); }
+  function loadFlowOverview() { return loadStaticJson('./data/flow-overview.json'); }
+
   function librarySourceById(id) { return librarySources.find((s) => s.id === id) || null; }
 
   // ライブラリ軸一覧（get_metadata で存在確認＝大きいファイルは落とさない・v2.3）。
@@ -986,6 +1000,8 @@ export function createProgram(dropbox, config) {
     toggleSheetCheckbox,
     loadProgress,
     loadProgressBoard,
+    loadFlowView,
+    loadFlowOverview,
     loadProjects,
     listLibrary,
     readLibraryItem,
