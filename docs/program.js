@@ -863,7 +863,70 @@ export function createProgram(dropbox, config) {
     return out;
   }
 
-  // 1ソースのファイル一覧＋更新時刻（server_modified）。未存在は空一覧で無事故。
+  // ---- Sheet一覧の rev キャッシュ（便13・loadCards と同じ流儀＝rev 一致なら本文を再DLしない） ----
+  // 保持するのは導出済みの「核」（P.sheetEntryCoreFromText の戻り＝本文全文は持たない）。
+  // localStorage に置くので、アプリを閉じて開き直しても差分DLだけで一覧が出る。
+  const SHEET_CACHE_KEY = 'pbm_cache_sheetcore';
+  // 版数は殻の build 番号と揃える（index.html / sw.js と同期・㋒テストが監視）。
+  // 導出（parser）が変われば必ず build も上がる＝旧い核は自動で捨てられる。
+  const SHEET_CACHE_VERSION = 44;
+  // 上限。実測（2026-08-03・172件）で 91KB＝平均 478B/件。localStorage 全体 5MB 前後の想定に対し十分な余裕を取る。
+  const SHEET_CACHE_MAX_BYTES = config.sheetCacheMaxBytes || 1500000;
+  let sheetCoreCache = null;          // Map<dropboxPath, { rev, core }>
+
+  function localStore() {
+    try { return typeof localStorage !== 'undefined' ? localStorage : (globalThis && globalThis.localStorage) || null; }
+    catch { return null; } // プライベートブラウズ等で参照自体が投げる場合
+  }
+
+  function sheetCoreCacheMap() {
+    if (sheetCoreCache) return sheetCoreCache;
+    sheetCoreCache = new Map();
+    const ls = localStore();
+    if (ls) {
+      try {
+        const raw = JSON.parse(ls.getItem(SHEET_CACHE_KEY) || 'null');
+        if (raw && raw.v === SHEET_CACHE_VERSION && raw.entries) {
+          for (const [p, rec] of Object.entries(raw.entries)) {
+            if (rec && rec.rev && rec.core) sheetCoreCache.set(p, { rev: rec.rev, core: rec.core });
+          }
+        }
+      } catch { /* 壊れていたら空から作り直す（一覧は出る） */ }
+    }
+    return sheetCoreCache;
+  }
+
+  // 剪定: 今回の一覧に出たファイルだけを残す（消えた/改名された分は自然に落ちる＝loadCards と同じ）。
+  // その上で JSON 総量が上限を超えるときは、大きい核から落として上限内へ収める
+  //   （落とした分は次回 DL され直すだけ＝正しさは失われない。残せる件数を最大化する選び方）。
+  function persistSheetCoreCache(next) {
+    sheetCoreCache = next;
+    const ls = localStore();
+    if (!ls) return { kept: next.size, dropped: 0, bytes: 0 };
+    const sized = [];
+    let total = 0;
+    for (const [p, rec] of next) {
+      const n = JSON.stringify(rec).length + p.length + 4;
+      sized.push([p, n]);
+      total += n;
+    }
+    let dropped = 0;
+    const skip = new Set();
+    if (total > SHEET_CACHE_MAX_BYTES) {
+      sized.sort((a, b) => b[1] - a[1]);
+      for (const [p, n] of sized) {
+        if (total <= SHEET_CACHE_MAX_BYTES) break;
+        skip.add(p); total -= n; dropped++;
+      }
+    }
+    const obj = {};
+    for (const [p, rec] of next) if (!skip.has(p)) obj[p] = rec;
+    try { ls.setItem(SHEET_CACHE_KEY, JSON.stringify({ v: SHEET_CACHE_VERSION, entries: obj })); }
+    catch { try { ls.removeItem(SHEET_CACHE_KEY); } catch { /* noop */ } } // 容量超過等は捨てて次回やり直す
+    return { kept: next.size - dropped, dropped, bytes: total };
+  }
+
+  // 1ソースのファイル一覧＋更新時刻（server_modified）＋rev（差分判定の鍵）。未存在は空一覧で無事故。
   async function listFilesForSource(source) {
     const base = sheetBase(source);
     let entries = [];
@@ -875,7 +938,7 @@ export function createProgram(dropbox, config) {
       const rel = ent.path_display.slice(base.length + 1);
       if (!sheetPathAllowed(source, rel)) continue;
       if (!sheetFileAllowed(source, basename(rel))) continue;
-      files.push({ file: rel, mtimeMs: ent.server_modified ? Date.parse(ent.server_modified) : 0 });
+      files.push({ file: rel, mtimeMs: ent.server_modified ? Date.parse(ent.server_modified) : 0, rev: ent.rev || null });
     }
     files.sort((a, b) => a.file.localeCompare(b.file));
     return files;
@@ -887,6 +950,9 @@ export function createProgram(dropbox, config) {
     let reverseClosureMap = {};
     try { const prog = await loadProgress(); reverseClosureMap = (prog && prog.reverseClosure) || {}; } catch { reverseClosureMap = {}; }
     const now = Date.now();
+    const cache = sheetCoreCacheMap();
+    const nextCache = new Map();
+    let downloaded = 0, reused = 0;
     const tags = [];
     for (const tag of (config.sheetTags || [])) {
       const subcategories = [];
@@ -896,24 +962,37 @@ export function createProgram(dropbox, config) {
         const entries = [];
         if (src) {
           const files = await listFilesForSource(src);
-          // 一覧の共通列（チェック数・要旨stale・関連単位）は本文から導くため全件DLが要る。
+          const metas = files.map((f) => ({ source: src.id, file: f.file, sub: src.sub, subcatKind: sc.kind, flow: sc.flow, numbered: src.numbered, mtimeMs: f.mtimeMs }));
+          // 一覧の共通列（チェック数・要旨stale・関連単位）は本文から導くため、初回は全件DLが要る。
           // 直列だと round-trip がファイル数ぶん積み上がり、モバイル回線では一覧が出るまで数分かかる
           //   （実測 2026-08-03: シナリオ源だけで 139 件 / 9.5MB＝退避混入込み）。
           //   有界並列（SHEET_DL_CONCURRENCY）で待ち時間を実質 1/N にする。順序は index で保つ。
-          const texts = await mapWithConcurrency(files, SHEET_DL_CONCURRENCY, async (f) => {
-            try { const dl = await dropbox.download(join(sheetBase(src), f.file)); return dl.text; } catch { return ''; }
+          // 2回目以降は rev 一致＝本文を落とさず前回の核を使う（便13・loadCards と同じ流儀）。
+          const cores = await mapWithConcurrency(files, SHEET_DL_CONCURRENCY, async (f, i) => {
+            const dpath = join(sheetBase(src), f.file);
+            const cached = f.rev ? cache.get(dpath) : null;
+            if (cached && cached.rev === f.rev) { reused++; return { core: cached.core, ok: true }; }
+            try {
+              const dl = await dropbox.download(dpath);
+              downloaded++;
+              return { core: P.sheetEntryCoreFromText(dl.text, metas[i]), ok: true };
+            } catch {
+              // 1件の失敗で一覧全体を倒さない（空の核で行だけ出す）。失敗はキャッシュに残さない。
+              return { core: P.sheetEntryCoreFromText('', metas[i]), ok: false };
+            }
           });
           files.forEach((f, i) => {
-            entries.push(P.enrichSheetEntryFromText(texts[i],
-              { source: src.id, file: f.file, sub: src.sub, subcatKind: sc.kind, flow: sc.flow, numbered: src.numbered, mtimeMs: f.mtimeMs },
-              summaries, reverseClosureMap, now));
+            const r = cores[i];
+            if (r.ok && f.rev) nextCache.set(join(sheetBase(src), f.file), { rev: f.rev, core: r.core });
+            entries.push(P.finishSheetEntry(r.core, metas[i], summaries, reverseClosureMap, now));
           });
         }
         subcategories.push({ id: sc.id, label: sc.label, flow: sc.flow || null, kind: sc.kind || null, source: sc.source || null, pending: !!sc.pending, entries });
       }
       tags.push({ id: tag.id, label: tag.label, pending: !!tag.pending, subcategories });
     }
-    return { tags, impactApprox: true };
+    const cacheStat = persistSheetCoreCache(nextCache);
+    return { tags, impactApprox: true, fetch: { downloaded, reused, cached: cacheStat.kept, cacheDropped: cacheStat.dropped, cacheBytes: cacheStat.bytes } };
   }
 
   // ---- RDSナビ（§4・便4）: 未対応💬の一覧＋機械count（該当箇所ジャンプ用）。原典は読み取りのみ。 ----

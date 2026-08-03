@@ -2312,24 +2312,15 @@ export function entryDocKind(subcatKind, fileName) {
   return subcatKind || 'confirm';
 }
 
-// エントリの共通列（§1-2b）を本文テキストから機械導出（純関数・Dropbox取得は呼び出し側）。
-//   meta: { source, file, sub, subcatKind, flow, mtimeMs }。summaries/reverseClosureMap は任意。
-export function enrichSheetEntryFromText(text, meta, summaries, reverseClosureMap, nowMs) {
+// エントリの「核」（§1-2b）＝本文からだけ決まる部分（純関数）。
+//   本文の rev が同じなら不変＝キャッシュに持ち越せる単位（本文全文は含めない＝小さい）。
+//   summaries / reverseClosureMap / 現在時刻に依存する列は含めない（finishSheetEntry の担当）。
+export function sheetEntryCoreFromText(text, meta) {
   const m = meta || {};
   const cs = countSheetCheckboxes(text || '');
   const currentHash = hashText(text || '');
-  const docKind = entryDocKind(m.subcatKind, m.file);
-  const key = (m.sub ? m.sub + '/' : '') + (m.file || '');
-  const sm = summaryFor(key, currentHash, summaries);
   const relatedUnits = extractRelatedUnits(m.file, text || '');
-  const impact = unlockImpact(relatedUnits, reverseClosureMap);
   const heading = ((/^#\s+(.*)$/m.exec(text || '') || [])[1] || '').trim();
-  const allChecked = cs.total > 0 && cs.unchecked === 0;
-  const unresolved = docKind === 'approval' ? !allChecked : (docKind === 'display' ? false : true);
-  const now = (nowMs != null) ? nowMs : Date.now();
-  const updatedDaysAgo = m.mtimeMs ? Math.max(0, Math.floor((now - m.mtimeMs) / 86400000)) : null;
-  let updated = '';
-  if (m.mtimeMs) { const d = new Date(m.mtimeMs); const p = (n) => String(n).padStart(2, '0'); updated = d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()); }
   // CASEグループ承認集計（§2-3・2層一覧用）＋シナリオメタ（§4）。
   let approval = { groups: [], allApproved: false };
   try { approval = sheetApprovalSummary(parseSheetBlocks(parseCard(text || '').body, m.numbered)); } catch { /* 空でも壊れない */ }
@@ -2339,17 +2330,47 @@ export function enrichSheetEntryFromText(text, meta, summaries, reverseClosureMa
   let rdsUnaddressed = null;
   if (m.source === 'rds') { try { rdsUnaddressed = parseRdsComments(text || '').unaddressedCount; } catch { rdsUnaddressed = null; } }
   return {
-    source: m.source, file: m.file, path: key,
-    title: heading || m.file, heading,
-    docKind, flow: m.flow || null,
-    checkboxTotal: cs.total, checkboxChecked: cs.checked,
-    currentHash, updatedDaysAgo, updated,
-    summary: sm.summary, summaryPresent: sm.present, stale: sm.stale,
-    relatedUnits, impact, unresolved,
+    checkboxTotal: cs.total, checkboxChecked: cs.checked, checkboxUnchecked: cs.unchecked,
+    currentHash, heading, relatedUnits,
     groups: groupSummaries, docApproved: approval.allApproved,
     stage: scenarioMeta.stage || null, statusDecl: scenarioMeta.status || null, layer: scenarioMeta.layer || null,
     rdsUnaddressed,
   };
+}
+
+// 核＋文脈（summaries / reverseClosureMap / 現在時刻 / meta）→ 一覧エントリ（純関数）。
+//   キャッシュヒット時もここは必ず通す＝要旨stale・解除インパクト・経過日数は常に最新の文脈で出す。
+export function finishSheetEntry(core, meta, summaries, reverseClosureMap, nowMs) {
+  const m = meta || {};
+  const c = core || {};
+  const docKind = entryDocKind(m.subcatKind, m.file);
+  const key = (m.sub ? m.sub + '/' : '') + (m.file || '');
+  const sm = summaryFor(key, c.currentHash, summaries);
+  const impact = unlockImpact(c.relatedUnits, reverseClosureMap);
+  const allChecked = c.checkboxTotal > 0 && c.checkboxUnchecked === 0;
+  const unresolved = docKind === 'approval' ? !allChecked : (docKind === 'display' ? false : true);
+  const now = (nowMs != null) ? nowMs : Date.now();
+  const updatedDaysAgo = m.mtimeMs ? Math.max(0, Math.floor((now - m.mtimeMs) / 86400000)) : null;
+  let updated = '';
+  if (m.mtimeMs) { const d = new Date(m.mtimeMs); const p = (n) => String(n).padStart(2, '0'); updated = d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()); }
+  return {
+    source: m.source, file: m.file, path: key,
+    title: c.heading || m.file, heading: c.heading,
+    docKind, flow: m.flow || null,
+    checkboxTotal: c.checkboxTotal, checkboxChecked: c.checkboxChecked,
+    currentHash: c.currentHash, updatedDaysAgo, updated,
+    summary: sm.summary, summaryPresent: sm.present, stale: sm.stale,
+    relatedUnits: c.relatedUnits, impact, unresolved,
+    groups: c.groups, docApproved: c.docApproved,
+    stage: c.stage || null, statusDecl: c.statusDecl || null, layer: c.layer || null,
+    rdsUnaddressed: c.rdsUnaddressed == null ? null : c.rdsUnaddressed,
+  };
+}
+
+// エントリの共通列（§1-2b）を本文テキストから機械導出（純関数・Dropbox取得は呼び出し側）。
+//   meta: { source, file, sub, subcatKind, flow, mtimeMs }。summaries/reverseClosureMap は任意。
+export function enrichSheetEntryFromText(text, meta, summaries, reverseClosureMap, nowMs) {
+  return finishSheetEntry(sheetEntryCoreFromText(text, meta), meta, summaries, reverseClosureMap, nowMs);
 }
 
 // RDSナビ（§4・便4）— 純関数（server と同名・挙動互換）。原典は一切変更しない（読み取り表示のみ）。

@@ -800,6 +800,7 @@ test('⑲ 詳細シートに操作系（削除/コメント/OKNGトグル）・�
 function makeMockDropbox(initial) {
   const store = new Map(Object.entries(initial || {}).map(([k, v]) => [k, { content: v, rev: 'r-' + k.length }]));
   let revCounter = 100;
+  const counts = { downloads: [], reset() { counts.downloads.length = 0; } }; // download したパスの記録（便13の差分DL検証用）
   function res({ status = 200, body = '', headers = {} }) {
     return {
       ok: status >= 200 && status < 300, status,
@@ -838,6 +839,7 @@ function makeMockDropbox(initial) {
       const arg = JSON.parse(opts.headers['Dropbox-API-Arg']);
       const meta = store.get(arg.path);
       if (!meta) return res({ status: 409, body: JSON.stringify({ error_summary: 'path/not_found/..' }) });
+      counts.downloads.push(arg.path);
       return res({ status: 200, body: meta.content, headers: { 'Dropbox-API-Result': JSON.stringify({ rev: meta.rev }) } });
     }
     if (url.endsWith('/files/get_metadata')) {
@@ -870,15 +872,18 @@ function makeMockDropbox(initial) {
     }
     throw new Error('想定外のURL: ' + url);
   }
-  return { fetchImpl, store };
+  return { fetchImpl, store, counts };
 }
 function mockProgram(initial, configOverride) {
-  const { fetchImpl, store } = makeMockDropbox(initial);
+  const { fetchImpl, store, counts } = makeMockDropbox(initial);
   const client = createDropboxClient({
     clientId: 't', fetchImpl,
     tokens: { access_token: 'a', refresh_token: 'r', expires_at: Date.now() + 3600000 },
   });
-  return { program: createProgram(client, { programRoot: '/ArchPlan/Program', ...(configOverride || {}) }), store };
+  const cfg = { programRoot: '/ArchPlan/Program', ...(configOverride || {}) };
+  // 同じ疑似 Dropbox に対して「アプリを開き直した」状態（メモリ上のキャッシュは空・localStorage は残る）を作る。
+  const restart = () => createProgram(client, cfg);
+  return { program: createProgram(client, cfg), store, counts, restart };
 }
 
 // ---------------------------------------------------------------------------
@@ -2576,7 +2581,11 @@ test('㋒(便7) build number in index.html matches sw.js CACHE version', () => {
   assert.ok(bm, 'index.html に build 番号');
   assert.ok(cm, 'sw.js に pbm-shell-v 版数');
   assert.strictEqual(bm[1], cm[1], 'build 表記(' + bm[1] + ') と sw CACHE 版数(' + cm[1] + ') が一致');
-  assert.strictEqual(bm[1], '43', '本便=build 43（便12・Sheets一覧の退避/監査除外＋有界並列DL＋便10.1移植。sw CACHE v43 と同期）');
+  assert.strictEqual(bm[1], '44', '本便=build 44（便13・Sheets一覧の rev キャッシュ。sw CACHE v44 と同期）');
+  // 便13: Sheet核キャッシュの版数も build と同期（導出が変われば build が上がる＝旧い核を自動で捨てる）。
+  const pm = /SHEET_CACHE_VERSION\s*=\s*(\d+)/.exec(readDoc('program.js'));
+  assert.ok(pm, 'program.js に SHEET_CACHE_VERSION');
+  assert.strictEqual(pm[1], bm[1], 'Sheet核キャッシュ版数(' + pm[1] + ') も build(' + bm[1] + ') と一致');
 });
 
 // ㋓(便7/便10.1) 実データ受入: SC-F_PL_AP_ENTP の全ケースに生ラベル・行頭bullet・遊離**が残らない。
@@ -2964,4 +2973,108 @@ test('便12-C program.loadSheetBoard: 本文DLを並列化しても一覧の順�
     const n = parseInt(/SC-J(\d+)/.exec(en.file)[1], 10);
     assert.strictEqual(en.title, 'SC-J' + n + ' 【流れ】T' + n, en.file + ' の見出しが自分の本文由来');
   }
+});
+
+// ===========================================================================
+// 便13（build 44）: Sheets 一覧の rev キャッシュ（loadCards と同じ流儀＝rev 一致なら本文を再DLしない）
+// ===========================================================================
+
+// localStorage の疑似（テスト中だけ globalThis に差し込む）。容量上限つきで剪定も試せる。
+function withFakeLocalStorage(fn, quota) {
+  const mem = new Map();
+  const prev = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+  globalThis.localStorage = {
+    getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+    setItem: (k, v) => {
+      let other = 0; for (const [kk, vv] of mem) if (kk !== k) other += kk.length + vv.length;
+      if (quota != null && other + k.length + String(v).length > quota) { const e = new Error('QuotaExceededError'); e.name = 'QuotaExceededError'; throw e; }
+      mem.set(k, String(v));
+    },
+    removeItem: (k) => mem.delete(k),
+  };
+  const done = () => { if (prev) Object.defineProperty(globalThis, 'localStorage', prev); else delete globalThis.localStorage; };
+  return Promise.resolve(fn(mem)).then((r) => { done(); return r; }, (e) => { done(); throw e; });
+}
+
+const SHEET_FIXTURE = (n) => '# SC-J' + n + ' 【流れ】T' + n + '\n\n## ケース表\n\n- [ ] **CASE-01 x**\n  - 起きること: ' + n + '\n';
+function sheetFixtureFiles(count) {
+  const files = {};
+  for (let i = 1; i <= count; i++) files['/ArchPlan/Docs/ConOps/Scenarios/SC-J' + String(i).padStart(3, '0') + '.md'] = SHEET_FIXTURE(i);
+  return files;
+}
+const scenarioDownloads = (counts) => counts.downloads.filter((p) => p.startsWith('/ArchPlan/Docs/ConOps/Scenarios/'));
+
+test('便13-A loadSheetBoard: rev が変わっていなければ本文を1件もDLしない（アプリを開き直しても）', async () => {
+  await withFakeLocalStorage(async () => {
+    const { program, counts, restart } = mockProgram(sheetFixtureFiles(8), APP_CONFIG);
+    const first = await program.loadSheetBoard();
+    assert.strictEqual(scenarioDownloads(counts).length, 8, '初回は全件DL（従来どおり）');
+    assert.strictEqual(first.fetch.downloaded, 8);
+    assert.strictEqual(first.fetch.reused, 0);
+
+    // アプリを開き直した状態＝メモリ上のキャッシュは空・localStorage の核だけが残る。
+    counts.reset();
+    const again = await restart().loadSheetBoard();
+    assert.deepStrictEqual(scenarioDownloads(counts), [], 'rev 不変なら本文DLはゼロ');
+    assert.strictEqual(again.fetch.downloaded, 0);
+    assert.strictEqual(again.fetch.reused, 8);
+
+    // 一覧の中身は初回と完全に同じ（キャッシュ経由でも列が欠けない）。
+    const rows = (b) => b.tags.flatMap((t) => t.subcategories).flatMap((s) => s.entries)
+      .map((e) => [e.path, e.title, e.checkboxTotal, e.checkboxChecked, e.currentHash, e.docKind, e.unresolved, e.impact, (e.groups || []).length].join('|')).sort();
+    assert.deepStrictEqual(rows(again), rows(first), 'キャッシュ経由でも一覧の内容が初回と一致');
+  });
+});
+
+test('便13-B loadSheetBoard: rev が変わったファイルだけ再DLし、その行だけ新しくなる', async () => {
+  await withFakeLocalStorage(async () => {
+    const { program, store, counts, restart } = mockProgram(sheetFixtureFiles(8), APP_CONFIG);
+    await program.loadSheetBoard();
+
+    // 1件だけ内容と rev を差し替える（他7件の rev は不変）。
+    const target = '/ArchPlan/Docs/ConOps/Scenarios/SC-J005.md';
+    store.set(target, { content: '# SC-J5 【流れ】改稿\n\n## ケース表\n\n- [x] **CASE-01 x**\n  - 起きること: 5\n', rev: 'r-NEW' });
+
+    counts.reset();
+    const board = await restart().loadSheetBoard();
+    assert.deepStrictEqual(scenarioDownloads(counts), [target], '再DLは rev が変わった1件のみ');
+    assert.strictEqual(board.fetch.downloaded, 1);
+    assert.strictEqual(board.fetch.reused, 7);
+    const sc = board.tags.flatMap((t) => t.subcategories).find((s) => s.source === 'scenario');
+    const changed = sc.entries.find((e) => e.file === 'SC-J005.md');
+    assert.strictEqual(changed.title, 'SC-J5 【流れ】改稿', '変更した行は新しい本文から導出');
+    assert.strictEqual(changed.checkboxChecked, 1, 'チェック数も更新されている');
+    assert.strictEqual(sc.entries.find((e) => e.file === 'SC-J004.md').title, 'SC-J4 【流れ】T4', '触っていない行は据え置き');
+
+    // 変更が定着した後は、また本文DLゼロに戻る。
+    counts.reset();
+    const settled = await restart().loadSheetBoard();
+    assert.deepStrictEqual(scenarioDownloads(counts), [], '定着後は再び本文DLゼロ');
+    assert.strictEqual(settled.fetch.reused, 8);
+  });
+});
+
+test('便13-C loadSheetBoard: キャッシュは上限で剪定され、上限0でも一覧は壊れない', async () => {
+  await withFakeLocalStorage(async (mem) => {
+    // 上限を小さく切る（大きい核から落として上限内へ収める）。
+    const { program, counts, restart } = mockProgram(sheetFixtureFiles(8), { ...APP_CONFIG, sheetCacheMaxBytes: 400 });
+    const first = await program.loadSheetBoard();
+    assert.ok(first.fetch.cacheDropped > 0, '上限超過ぶんは剪定される');
+    assert.ok(first.fetch.cached > 0, '上限内は残る');
+    const raw = mem.get('pbm_cache_sheetcore') || '';
+    assert.ok(raw.length > 0 && raw.length < 2000, '書き出した量が上限のオーダーに収まる（実測 ' + raw.length + 'B）');
+    assert.strictEqual(Object.keys(JSON.parse(raw).entries).length, first.fetch.cached, '書き出し件数＝剪定後の件数');
+
+    counts.reset();
+    const again = await restart().loadSheetBoard();
+    assert.strictEqual(again.fetch.downloaded + again.fetch.reused, 8, '剪定されても全8件そろう');
+    assert.strictEqual(again.fetch.downloaded, 8 - first.fetch.cached, '落とした分だけ再DL（残った分はDLしない）');
+
+    // 上限0＝キャッシュを一切持てなくても一覧は従来どおり出る。
+    const zero = mockProgram(sheetFixtureFiles(8), { ...APP_CONFIG, sheetCacheMaxBytes: 1 });
+    const b0 = await zero.program.loadSheetBoard();
+    const sc0 = b0.tags.flatMap((t) => t.subcategories).find((s) => s.source === 'scenario');
+    assert.strictEqual(sc0.entries.length, 8, '上限0でも一覧は全件出る');
+    assert.strictEqual(b0.fetch.cached, 0, '何も残らない');
+  });
 });
