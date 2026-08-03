@@ -2576,15 +2576,22 @@ test('㋒(便7) build number in index.html matches sw.js CACHE version', () => {
   assert.ok(bm, 'index.html に build 番号');
   assert.ok(cm, 'sw.js に pbm-shell-v 版数');
   assert.strictEqual(bm[1], cm[1], 'build 表記(' + bm[1] + ') と sw CACHE 版数(' + cm[1] + ') が一致');
-  assert.strictEqual(bm[1], '41', '本便=build 41（便10+11・フロー俯瞰／直近の詳細の移植）');
+  assert.strictEqual(bm[1], '43', '本便=build 43（便12・Sheets一覧の退避/監査除外＋有界並列DL＋便10.1移植。sw CACHE v43 と同期）');
 });
 
-// ㋓(便7) 実データ受入: SC-F_PL_AP_ENTP 全25ケースに生ラベル・行頭bullet・遊離**が残らない
-test('㋓(便7) real SC-F_PL_AP_ENTP: no raw labels / lead bullets / stray ** in 25 cases', () => {
+// ㋓(便7/便10.1) 実データ受入: SC-F_PL_AP_ENTP の全ケースに生ラベル・行頭bullet・遊離**が残らない。
+//   ケース数はハードコードせず原典のCASE番号列（連番）から導出し、解析ブロック数と一致させる
+//   （旧版25ケースへのピン留めを外す＝R2改稿で29ケースになっても検出力を落とさない形。Mac ㊻ と同形）。
+test('㋓(便7) real SC-F_PL_AP_ENTP: no raw labels / lead bullets / stray ** (case count source-derived)', () => {
   const scPath = resolve(HERE, '..', '..', '..', 'Docs', 'ConOps', 'Scenarios', 'Features', 'SC-F_PL_AP_ENTP.md');
   const body = P.parseCard(readFileSync(scPath, 'utf8')).body;
   const cases = P.parseSheetBlocks(body, false).filter((b) => b.kind === 'case');
-  assert.strictEqual(cases.length, 25, '25ケース');
+  const nums = cases.map((c) => { const m = /CASE-(\d+)/.exec(P.parseCaseFields(body.slice(c.start, c.end), null).caseId); return m ? parseInt(m[1], 10) : null; }).filter((n) => n != null).sort((a, b) => a - b);
+  assert.ok(nums.length > 0, 'CASE番号を持つケースが存在する');
+  assert.strictEqual(cases.length, nums.length, '全ケースがCASE番号を持つ（番号なし縮退なし）');
+  const expectedSeq = Array.from({ length: nums[nums.length - 1] - nums[0] + 1 }, (_, i) => nums[0] + i);
+  assert.deepStrictEqual([...new Set(nums)], expectedSeq, 'CASE番号は連番（欠番・重複なし＝解析の取りこぼし検出）');
+  assert.strictEqual(cases.length, expectedSeq.length, '解析ケース数＝連番数（導出一致・数変動で壊れない）');
   const RAW = /^(検収形態|起きること|前提|操作\/契機|観察可能な結果|実装状態|実装依存|関連品質基準|失敗探索の考察|対象|根拠|現況ギャップ)\s*[:：]/;
   let leadBullet = 0, rawLabel = 0, stray = 0;
   for (const c of cases) {
@@ -2602,6 +2609,26 @@ test('㋓(便7) real SC-F_PL_AP_ENTP: no raw labels / lead bullets / stray ** in
   assert.strictEqual(leadBullet, 0, '行頭bulletゼロ');
   assert.strictEqual(rawLabel, 0, '原典ラベルゼロ');
   assert.strictEqual(stray, 0, '遊離**ゼロ');
+});
+
+// ㋓b(便10.1・回帰) 折りたたみ対象（対象/根拠）の◆行が「気になる点」へ回り込み「根拠:」ラベルが漏れる穴。
+//   Mac server.js 便10.1 と同修正の移植。ケースIDは原典から動的に選ぶ（数変動で壊れない）。
+test('㋓b(便10.1) real SC-F_PL_AP_ENTP: 対象/根拠 label does not leak into display units', () => {
+  const scPath = resolve(HERE, '..', '..', '..', 'Docs', 'ConOps', 'Scenarios', 'Features', 'SC-F_PL_AP_ENTP.md');
+  const body = P.parseCard(readFileSync(scPath, 'utf8')).body;
+  const cases = P.parseSheetBlocks(body, false).filter((b) => b.kind === 'case');
+  const LABEL = /^\s*(対象|根拠)\s*[:：]/;
+  let withCollapsedConcern = 0;
+  for (const c of cases) {
+    const raw = body.slice(c.start, c.end);
+    const cf = P.parseCaseFields(raw, null);
+    // 折りたたみ対象（対象/根拠）の行に◆を含むケース＝この穴の発火条件。
+    const collapsedLines = cf.sections.filter((s) => s.collapse).flatMap((s) => (s.segments || []).flatMap((g) => g.lines || []));
+    if (collapsedLines.some((l) => String(l).indexOf('◆') >= 0)) withCollapsedConcern++;
+    for (const t of (cf.concernsDisplay || [])) assert.ok(!LABEL.test(t), cf.caseId + ' の気になる点に「根拠:/対象:」が漏れない: ' + String(t).slice(0, 40));
+    cf.sections.forEach((s) => (s.display || []).forEach((u) => assert.ok(!LABEL.test(u.text), cf.caseId + ' の表示ユニットに「根拠:/対象:」が漏れない')));
+  }
+  assert.ok(withCollapsedConcern > 0, '発火条件（折りたたみ対象の◆行）が実データに存在する＝検出力のある回帰テスト');
 });
 
 // ============================================================================
@@ -2635,30 +2662,26 @@ test('㋔(便7.1) impl-status text: caseImplStatusText extract + implTextVocab 4
   assert.strictEqual(P.caseStatusVocab(null, null, null, null).vocab, '不明', '第3源も無ければ不明');
 });
 
-// ㋕(便7.1) 実データ: ENTP（マーカーもtest_statusも無い実物）で第3源が効き「不明」が激減（25→0）
-test('㋕(便7.1) real SC-F_PL_AP_ENTP: impl-status text collapses 不明 (before 25 → after 0)', () => {
+// ㋕(便7.1/便10.1) 実データ: ENTP の全ケースが状態導出源で解決し「不明」が残らない。
+//   （ENTP v2.2/R2 再公開で各ケースが実装可否マーカーを持つ様式へ変わり、旧前提「マーカー不在＝第3源が効く」は
+//    原典側で解消済み。旧版へのピン留め〔25→0・全25が impl-text 由来〕を外し、原典のケース数・導出源の内訳に
+//    依存しない不変条件——「全ケースが正規の導出源で解決＝不明ゼロ」——を検証する。第3源の単体挙動は ㋔ が担保。
+//    Mac ㊽ と同形。）
+test('㋕(便7.1) real SC-F_PL_AP_ENTP: status derivation resolves every case (0 unknown, source-derived)', () => {
   const scPath = resolve(HERE, '..', '..', '..', 'Docs', 'ConOps', 'Scenarios', 'Features', 'SC-F_PL_AP_ENTP.md');
   const body = P.parseCard(readFileSync(scPath, 'utf8')).body;
   const cases = P.parseSheetBlocks(body, false).filter((b) => b.kind === 'case');
-  assert.strictEqual(cases.length, 25, '25ケース');
-  let before = 0, after = 0, implSrc = 0, hasDepName = false;
-  const head = {};
+  assert.ok(cases.length > 0, 'ケースが存在する（原典から導出）');
+  const VALID_SRC = new Set(['marker', 'test', 'impl-text']);
+  let unknown = 0, resolved = 0;
   for (const c of cases) {
-    const rawC = body.slice(c.start, c.end);
-    const cf = P.parseCaseFields(rawC, null);
-    const mk = P.caseImplMarker(rawC);
-    if (P.caseStatusVocab(mk.marker, null, mk.detail).vocab === '不明') before++;   // 変更前相当（第3源なし）
-    if (cf.status.vocab === '不明') after++;
-    if (cf.status.source === 'impl-text') implSrc++;
-    if (cf.status.vocab === '他機能の実装待ち（傾斜敷地作成）') hasDepName = true;
-    const h = cf.status.vocab.replace(/（.*/, '');
-    head[h] = (head[h] || 0) + 1;
+    const cf = P.parseCaseFields(body.slice(c.start, c.end), null);
+    if (cf.status.vocab === '不明') { unknown++; continue; }
+    resolved++;
+    assert.ok(VALID_SRC.has(cf.status.source), cf.caseId + ' の状態は正規の導出源をもつ（源=' + cf.status.source + '）');
   }
-  assert.strictEqual(before, 25, '変更前相当は全25が不明（マーカー・test_status不在）');
-  assert.strictEqual(after, 0, '第3源で不明が激減＝0件');
-  assert.strictEqual(implSrc, 25, '全25が実装状態テキスト由来');
-  assert.ok(hasDepName, '未実装×前提待ち→他機能の実装待ち（傾斜敷地作成）が実データで成立');
-  assert.ok(head['実装済み'] >= 10 && head['実装可'] >= 1 && head['追加実装が必要'] >= 1, '実装済み多数＋実装可（未着手）＋追加実装が必要');
+  assert.strictEqual(unknown, 0, '実データで「不明」が残らない（全ケースが導出源で解決）');
+  assert.strictEqual(resolved, cases.length, '解決数＝ケース数（＝不明ゼロの言い換え・導出一致）');
 });
 
 // ===========================================================================
@@ -2879,4 +2902,66 @@ test('便10+11 program 配線: loadFlowView / loadFlowOverview が公開され�
   const { program } = mockProgram({});
   assert.strictEqual(typeof program.loadFlowView, 'function', 'loadFlowView 公開');
   assert.strictEqual(typeof program.loadFlowOverview, 'function', 'loadFlowOverview 公開');
+});
+
+// ===========================================================================
+// 便12（build 42）— Sheets 一覧が「読み込み中」のまま返らない不具合の修理
+//   根因: 一覧構築が対象ファイルの本文を全件・直列にDLする設計で、
+//         (a) 退避 `_archive*` / 監査 `_audit` 配下が basename の exclude を素通りして一覧を汚染
+//         (b) SC-F の R2 増量で総量が跳ね上がり、モバイル回線では待ち時間が実用外になった。
+//   修理: excludePath（パス基準の除外）＋ 有界並列DL。
+// ===========================================================================
+
+test('便12-A config: 再帰ソースは excludePath でパス基準に `_` 配下を除外する', () => {
+  const scen = (APP_CONFIG.sheetSources || []).find((s) => s.id === 'scenario');
+  assert.ok(scen, 'scenario ソースが存在する');
+  assert.ok(scen.excludePath, 'scenario に excludePath がある');
+  const re = new RegExp(scen.excludePath);
+  assert.ok(re.test('Features/_archive_preR2/SC-F_PL_AP_ENTP_preR2_20260802.md'), '退避フォルダ配下を除外');
+  assert.ok(re.test('Features/_audit/AUDIT_ENTP_R2_2026-08-02.md'), '監査フォルダ配下を除外');
+  assert.ok(re.test('_archive_preR/SC-C001_preK3adapt_20260724.md'), '直下の退避フォルダも除外');
+  assert.ok(!re.test('Features/SC-F_PL_AP_ENTP.md'), '正本は除外しない');
+  assert.ok(!re.test('SC-J001.md'), '直下の正本は除外しない');
+  // 退避ファイルは basename の exclude（^_）では落ちない＝excludePath が要る、という穴の再発防止。
+  assert.ok(!new RegExp(scen.exclude).test('SC-F_PL_AP_ENTP_preR2_20260802.md'), 'basename の exclude だけでは退避ファイルが素通りする');
+  // 再帰する他ソースにも同じ意図が入っていること。
+  for (const s of (APP_CONFIG.sheetBoardSources || [])) {
+    if (s.recurse) assert.ok(s.excludePath, s.id + ' も excludePath を持つ');
+  }
+});
+
+test('便12-B program: 一覧・ボードとも `_` 配下を出さず、開こうとしても拒否する', async () => {
+  const SC = '# SC-F_X 【機能】Y\n\n## ケース表\n\n### 正常系\n- [ ] **CASE-01 あるべき体験（正常系）**\n  - 起きること: 説明\n';
+  const { program } = mockProgram({
+    '/ArchPlan/Docs/ConOps/Scenarios/SC-J001.md': SC,
+    '/ArchPlan/Docs/ConOps/Scenarios/Features/SC-F_PL_AP_ENTP.md': SC,
+    '/ArchPlan/Docs/ConOps/Scenarios/Features/_archive_preR2/SC-F_PL_AP_ENTP_preR2_20260802.md': SC,
+    '/ArchPlan/Docs/ConOps/Scenarios/Features/_audit/SC-F_AUDIT_ENTP.md': SC,
+    '/ArchPlan/Docs/ConOps/Scenarios/_archive_preR/SC-C001_preK3adapt_20260724.md': SC,
+  }, APP_CONFIG);
+  const src = (await program.listSheets()).find((s) => s.id === 'scenario');
+  assert.deepStrictEqual(src.files.map((f) => f.file).sort(), ['Features/SC-F_PL_AP_ENTP.md', 'SC-J001.md'], '一覧は正本2本のみ（退避・監査は出さない）');
+  const board = await program.loadSheetBoard();
+  const sc = board.tags.flatMap((t) => t.subcategories).find((s) => s.source === 'scenario');
+  assert.deepStrictEqual(sc.entries.map((e) => e.file).sort(), ['Features/SC-F_PL_AP_ENTP.md', 'SC-J001.md'], 'ボードも正本2本のみ');
+  await assert.rejects(() => program.readSheet('scenario', 'Features/_archive_preR2/SC-F_PL_AP_ENTP_preR2_20260802.md'), /対象外/, '退避ファイルは直接指定でも開けない');
+  await assert.rejects(() => program.readSheet('scenario', 'Features/_audit/SC-F_AUDIT_ENTP.md'), /対象外/, '監査ファイルは直接指定でも開けない');
+  const ok = await program.readSheet('scenario', 'Features/SC-F_PL_AP_ENTP.md');
+  assert.strictEqual(ok.file, 'Features/SC-F_PL_AP_ENTP.md', '正本は従来どおり開ける');
+});
+
+test('便12-C program.loadSheetBoard: 本文DLを並列化しても一覧の順序と内容が崩れない', async () => {
+  const mk = (n) => '# SC-J' + n + ' 【流れ】T' + n + '\n\n## ケース表\n\n- [ ] **CASE-01 x**\n  - 起きること: ' + n + '\n';
+  const files = {};
+  for (let i = 1; i <= 12; i++) files['/ArchPlan/Docs/ConOps/Scenarios/SC-J' + String(i).padStart(3, '0') + '.md'] = mk(i);
+  const { program } = mockProgram(files, APP_CONFIG);
+  const board = await program.loadSheetBoard();
+  const sc = board.tags.flatMap((t) => t.subcategories).find((s) => s.source === 'scenario');
+  const expected = Object.keys(files).map((p) => p.split('/').pop()).sort();
+  assert.deepStrictEqual(sc.entries.map((e) => e.file), expected, '並列DLでも一覧はファイル名順（入力順を保持）');
+  // 各 entry が自分のファイルの本文から導出されている（取り違えゼロ）。
+  for (const en of sc.entries) {
+    const n = parseInt(/SC-J(\d+)/.exec(en.file)[1], 10);
+    assert.strictEqual(en.title, 'SC-J' + n + ' 【流れ】T' + n, en.file + ' の見出しが自分の本文由来');
+  }
 });

@@ -504,10 +504,17 @@ export function createProgram(dropbox, config) {
     const ng = source.exclude ? new RegExp(source.exclude).test(name) : false;
     return ok && !ng;
   }
-  // ソース内相対パス file のガード（.. や空要素を拒否・match/exclude 再検証＝任意パス拒否）。
+  // ソース内相対パスの除外（config.excludePath）。退避 `_archive*` / 監査 `_audit` 等の配下を丸ごと外す。
+  // basename の exclude では退避ファイル名（SC-F_..._preR2_*.md）が素通りするため、パス基準で判定する。
+  function sheetPathAllowed(source, rel) {
+    if (!source || !source.excludePath) return true;
+    return !new RegExp(source.excludePath).test(String(rel || ''));
+  }
+  // ソース内相対パス file のガード（.. や空要素を拒否・match/exclude/excludePath 再検証＝任意パス拒否）。
   function sheetAssertFile(source, file) {
     const f = String(file || '');
     if (f === '' || f.split('/').some((s) => s === '..' || s === '')) throw new Error('不正なファイルパス: ' + file);
+    if (!sheetPathAllowed(source, f)) throw new Error('対象外のファイル: ' + file);
     if (!sheetFileAllowed(source, basename(f))) throw new Error('対象外のファイル: ' + file);
   }
 
@@ -527,6 +534,7 @@ export function createProgram(dropbox, config) {
       for (const ent of entries) {
         if (ent['.tag'] !== 'file') continue;
         const rel = ent.path_display.slice(base.length + 1);
+        if (!sheetPathAllowed(source, rel)) continue;
         if (!sheetFileAllowed(source, basename(rel))) continue;
         files.push(rel);
       }
@@ -837,6 +845,24 @@ export function createProgram(dropbox, config) {
     }, { createIfMissing: true });
   }
 
+  // 一覧構築の本文DLの同時実行数。Dropbox のレート制限に当たらない程度の控えめな値。
+  const SHEET_DL_CONCURRENCY = 6;
+  // 有界並列 map（入力順を保った結果配列を返す）。fn は自前で例外を握る前提（1件の失敗で全体を倒さない）。
+  async function mapWithConcurrency(items, limit, fn) {
+    const out = new Array(items.length);
+    let next = 0;
+    const worker = async () => {
+      for (;;) {
+        const i = next++;
+        if (i >= items.length) return;
+        out[i] = await fn(items[i], i);
+      }
+    };
+    const n = Math.max(1, Math.min(limit, items.length));
+    await Promise.all(Array.from({ length: n }, worker));
+    return out;
+  }
+
   // 1ソースのファイル一覧＋更新時刻（server_modified）。未存在は空一覧で無事故。
   async function listFilesForSource(source) {
     const base = sheetBase(source);
@@ -847,6 +873,7 @@ export function createProgram(dropbox, config) {
     for (const ent of entries) {
       if (ent['.tag'] !== 'file') continue;
       const rel = ent.path_display.slice(base.length + 1);
+      if (!sheetPathAllowed(source, rel)) continue;
       if (!sheetFileAllowed(source, basename(rel))) continue;
       files.push({ file: rel, mtimeMs: ent.server_modified ? Date.parse(ent.server_modified) : 0 });
     }
@@ -869,13 +896,18 @@ export function createProgram(dropbox, config) {
         const entries = [];
         if (src) {
           const files = await listFilesForSource(src);
-          for (const f of files) {
-            let text = '';
-            try { const dl = await dropbox.download(join(sheetBase(src), f.file)); text = dl.text; } catch { text = ''; }
-            entries.push(P.enrichSheetEntryFromText(text,
+          // 一覧の共通列（チェック数・要旨stale・関連単位）は本文から導くため全件DLが要る。
+          // 直列だと round-trip がファイル数ぶん積み上がり、モバイル回線では一覧が出るまで数分かかる
+          //   （実測 2026-08-03: シナリオ源だけで 139 件 / 9.5MB＝退避混入込み）。
+          //   有界並列（SHEET_DL_CONCURRENCY）で待ち時間を実質 1/N にする。順序は index で保つ。
+          const texts = await mapWithConcurrency(files, SHEET_DL_CONCURRENCY, async (f) => {
+            try { const dl = await dropbox.download(join(sheetBase(src), f.file)); return dl.text; } catch { return ''; }
+          });
+          files.forEach((f, i) => {
+            entries.push(P.enrichSheetEntryFromText(texts[i],
               { source: src.id, file: f.file, sub: src.sub, subcatKind: sc.kind, flow: sc.flow, numbered: src.numbered, mtimeMs: f.mtimeMs },
               summaries, reverseClosureMap, now));
-          }
+          });
         }
         subcategories.push({ id: sc.id, label: sc.label, flow: sc.flow || null, kind: sc.kind || null, source: sc.source || null, pending: !!sc.pending, entries });
       }
@@ -931,6 +963,8 @@ export function createProgram(dropbox, config) {
       if (matchRe && !matchRe.test(name)) continue;
       if (excludeRe && excludeRe.test(name)) continue;
       if (/^_/.test(name)) continue;
+      // 退避 `_archive*` / 監査 `_audit` 等の配下は原典一覧にも出さない（正本のみ・sheetSources と同じ意図）。
+      if (/(^|\/)_/.test(rel)) continue;
       const mtimeMs = ent.server_modified ? Date.parse(ent.server_modified) : 0;
       entries.push(Object.assign({ file: o.sub + '/' + rel, name, dir: (o.sub + '/' + rel).replace(/\/[^/]*$/, '') }, originEntryState(mtimeMs, now)));
     }

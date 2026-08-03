@@ -63,18 +63,22 @@ export const config = {
   // Sheets ソース定義（パスはここに集約＝config化・読み取り専用＋💬コメント＋承認）。
   // ベース = programRoot の親（'/ArchPlan/Program' → '/ArchPlan'）＋ sub。
   // match/exclude はファイル basename に適用する正規表現（文字列・exclude 空＝除外なし）。
+  // excludePath は「ソース内相対パス」に適用する正規表現（文字列・空/未指定＝除外なし）。
+  //   `(^|/)_` ＝ 先頭が `_` のディレクトリ配下（退避 `_archive*` / 監査 `_audit` 等）を丸ごと除外する。
+  //   basename の exclude だけでは退避ファイル（例 SC-F_..._preR2_20260802.md）が素通りし、
+  //   一覧が退避・監査で汚染され本文DL量も膨らむ（SPEC上の意図＝正本のみ表示）。
   sheetSources: [
-    { id: 'scenario', label: 'シナリオ', sub: 'Docs/ConOps/Scenarios', recurse: true, numbered: false, match: '^SC-.*\\.md$', exclude: '^_' },
-    { id: 'completion', label: '完成定義', sub: 'archplan-core/Docs/TestDefinitions', recurse: true, numbered: false, match: '\\.md$', exclude: '^(METHOD|_)' },
+    { id: 'scenario', label: 'シナリオ', sub: 'Docs/ConOps/Scenarios', recurse: true, numbered: false, match: '^SC-.*\\.md$', exclude: '^_', excludePath: '(^|/)_' },
+    { id: 'completion', label: '完成定義', sub: 'archplan-core/Docs/TestDefinitions', recurse: true, numbered: false, match: '\\.md$', exclude: '^(METHOD|_)', excludePath: '(^|/)_' },
     { id: 'rds', label: 'RDS', sub: 'Projects/RequirementManagement/Works/RDS', recurse: false, numbered: true, match: '^RDS_.*\\.md$', exclude: '' },
   ],
 
   // 便1（v2.10 / build 30）: D-2動作定義・D-4テスト報告の追加ソース（初期は原典未整備＝空一覧で壊れない・§1-2a）。
   // sheetSources（既存3）は不変更。board 用の拡張ソース。
   sheetBoardSources: [
-    { id: 'behaviors', label: '動作定義', sub: 'Docs/ConOps/Behaviors', recurse: true, numbered: false, match: '\\.md$', exclude: '^_' },
+    { id: 'behaviors', label: '動作定義', sub: 'Docs/ConOps/Behaviors', recurse: true, numbered: false, match: '\\.md$', exclude: '^_', excludePath: '(^|/)_' },
     // 便3（§3）: D-4 config `testReports`（既定=archplan-core/Docs/TestReports・実在0本＝空許容・◆置き場未確定＝フォルダは作らない）。
-    { id: 'testreport', label: 'テスト報告', sub: 'archplan-core/Docs/TestReports', recurse: true, numbered: false, match: '\\.md$', exclude: '^_' },
+    { id: 'testreport', label: 'テスト報告', sub: 'archplan-core/Docs/TestReports', recurse: true, numbered: false, match: '\\.md$', exclude: '^_', excludePath: '(^|/)_' },
   ],
 
   // 3画面タグ（§1-2a）。設計基盤は便4でB-1〜B-6枠を作成＝便1はタグのみ・準備中表示。

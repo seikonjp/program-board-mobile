@@ -1537,16 +1537,21 @@ export function composeCaseSectionDisplay(section) {
   return out;
 }
 
+// ◆行（気になる点item8）の表示化: 行頭bulletを掃除し、他セクションで既出の行は重複除去（重複ノイズ根絶）。
+// 便10.1（Mac server.js と同修正）: 折りたたみセクション（対象/根拠）に属する◆行は概要側へも出さない。
+//   出すと「根拠: …」の原典ラベルが剥がれないまま表示ユニットへ漏れる（ラベル剥がしはしない＝◆行は本文そのもの）。
 export function composeConcernsDisplay(concerns, sections) {
   const shown = new Set();
+  const collapsed = new Set();
   for (const sec of (sections || [])) {
-    if (sec.collapse) continue;
-    for (const seg of (sec.segments || [])) for (const l of (seg.lines || [])) shown.add(String(l).trim());
+    const bucket = sec.collapse ? collapsed : shown;
+    for (const seg of (sec.segments || [])) for (const l of (seg.lines || [])) bucket.add(String(l).trim());
   }
   const out = [];
   for (const c of (concerns || [])) {
     const t = String(c).trim();
     if (shown.has(t)) continue;
+    if (collapsed.has(t)) continue;
     out.push(t.replace(/^[-*]\s+/, ''));
   }
   return out;
