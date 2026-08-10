@@ -187,12 +187,13 @@ export const config = {
   // Views ライブラリ8軸（DOC_GOVERNANCE_LIST View9の進捗以外・v2.3）。
   // 未存在正本は「未整備」表示で無事故。開いた時のみ取得。
   // 2026-08-10 裁定反映: コム＝暫定顔SPECIES_LIST（COM_CATALOG.json新設まで）／
-  // 品質基準＝判定品質基準PJの枠組み文書（従来sub:null）／要件＝JSONの実在所在。
+  // 品質基準＝判定品質基準PJの枠組み文書（従来sub:null）／要件＝JSONの実在所在／
+  // 操作＝展開台帳EXPANSION_LEDGER.md（旧OPERATION_ROUTING_TABLE.mdは突き合わせ材料へ降格・実ファイルは温存）。
   librarySources: [
     { id: 'feature', label: '機能', sub: 'archplan-core/Docs/Features/FEATURE_LIST.json', type: 'json' },
     { id: 'com', label: 'コム', sub: 'Projects/DataStructure/Works/W3_定義作成/SPECIES_LIST.md', type: 'md' },
     { id: 'condition', label: '設計条件', sub: 'archplan-core/Docs/Conditions/DESIGN_CONDITION_CATALOG.md', type: 'md' },
-    { id: 'operation', label: '操作', sub: 'Projects/OperationManagement/OPERATION_ROUTING_TABLE.md', type: 'md' },
+    { id: 'operation', label: '操作', sub: 'Projects/OperationManagement/EXPANSION_LEDGER.md', type: 'md' },
     { id: 'screen', label: '画面', sub: 'Projects/ScreenManagement/SCREEN_LIST.md', type: 'md' },
     { id: 'project', label: 'プロジェクト', sub: 'Program/PROJECT_REGISTRY.md', type: 'md' },
     { id: 'quality', label: '品質基準', sub: 'Projects/判定品質基準/QUALITY_JUDGMENT_FRAMEWORK_v1_2026-07-26.md', type: 'md' },
