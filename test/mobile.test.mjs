@@ -1554,7 +1554,7 @@ test('㉝ program.loadProgress synthesizes 4 sources (open-on-demand) (v2.3)', a
 test('㉞ program library list/read: availability, missing-axis graceful, md/json (v2.3)', async () => {
   const A = '/ArchPlan';
   const { program } = mockProgram({
-    [A + '/archplan-core/Docs/Conditions/ELEMENT_CATALOG.md']: '# 設計条件\n\n## CN-1 敷地\nx\n\n## CN-2 道路\ny\n',
+    [A + '/archplan-core/Docs/Conditions/DESIGN_CONDITION_CATALOG.md']: '# 設計条件\n\n## CN-1 敷地\nx\n\n## CN-2 道路\ny\n',
     [A + '/archplan-core/Docs/Features/FEATURE_LIST.json']: JSON.stringify({ meta: { name: 'x' } }),
     // com/screen/operation/project/requirement は置かない＝未整備
   }, { progressSources: APP_CONFIG.progressSources, librarySources: APP_CONFIG.librarySources });
@@ -1565,7 +1565,7 @@ test('㉞ program library list/read: availability, missing-axis graceful, md/jso
     ['feature', 'com', 'condition', 'operation', 'screen', 'project', 'quality', 'requirement'], 'View9の8軸');
   assert.strictEqual(byId.condition, true, '実在md→available');
   assert.strictEqual(byId.feature, true, '実在json→available');
-  assert.strictEqual(byId.quality, false, 'sub:null（品質基準枠）→未整備');
+  assert.strictEqual(byId.quality, false, '未存在（判定品質基準の枠組み文書が無いモック）→未整備');
   assert.strictEqual(byId.com, false, '未存在→未整備（無事故）');
 
   const md = await program.readLibraryItem('condition');
@@ -2307,7 +2307,7 @@ test('㊳b(便4) program.loadLibraryOrigins: resolved vs 未整備 honest (mock)
   const { program } = mockProgram({
     '/ArchPlan/Projects/DataStructure/Works/W3_定義作成/SPECIES_LIST.md': '# 種一覧\n',
     '/ArchPlan/Projects/DataStructure/Works/W3_定義作成/G01_SCHEMA.md': '# G01\n',
-    '/ArchPlan/archplan-core/Docs/Conditions/ELEMENT_CATALOG.md': '# 条件\n',
+    '/ArchPlan/archplan-core/Docs/Conditions/DESIGN_CONDITION_CATALOG.md': '# 条件\n',
   }, APP_CONFIG);
   const board = await program.loadLibraryOrigins();
   assert.deepStrictEqual(board.tags.map((t) => t.id), ['flow', 'foundation', 'rds']);
@@ -2326,10 +2326,10 @@ test('㊳b(便4) program.loadLibraryOrigins: resolved vs 未整備 honest (mock)
 // ㊳c Library原典: readOriginFile はホワイトリスト内のみ（任意パス読取り拒否）。
 test('㊳c(便4) program.readOriginFile: whitelist guard', async () => {
   const { program } = mockProgram({
-    '/ArchPlan/archplan-core/Docs/Conditions/ELEMENT_CATALOG.md': '# 条件\n- x\n',
+    '/ArchPlan/archplan-core/Docs/Conditions/DESIGN_CONDITION_CATALOG.md': '# 条件\n- x\n',
     '/ArchPlan/Program/Cards/C-U0000_TEMPLATE/card.md': 'secret',
   }, APP_CONFIG);
-  const ok = await program.readOriginFile('archplan-core/Docs/Conditions/ELEMENT_CATALOG.md');
+  const ok = await program.readOriginFile('archplan-core/Docs/Conditions/DESIGN_CONDITION_CATALOG.md');
   assert.strictEqual(ok.type, 'md');
   assert.ok(Array.isArray(ok.blocks));
   await assert.rejects(() => program.readOriginFile('Program/Cards/C-U0000_TEMPLATE/card.md'), /対象外/, 'リスト外は拒否');

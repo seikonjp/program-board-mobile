@@ -124,7 +124,7 @@ export const config = {
       { id: 'B-2', label: '設定項目', origins: [ { label: 'settingData定義・実行時代入census', kind: 'unknown' } ] },
       { id: 'B-3', label: '設計条件', origins: [
         { label: 'CONDITIONS_LIST', kind: 'file', sub: 'Projects/DataStructure/Works/W3_定義作成/CONDITIONS_LIST.md' },
-        { label: 'ELEMENT_CATALOG', kind: 'file', sub: 'archplan-core/Docs/Conditions/ELEMENT_CATALOG.md' } ] },
+        { label: 'DESIGN_CONDITION_CATALOG', kind: 'file', sub: 'archplan-core/Docs/Conditions/DESIGN_CONDITION_CATALOG.md' } ] },
       { id: 'B-4', label: '品質基準', origins: [
         { label: 'VALIDATION_RULES.json（正）', kind: 'file', sub: 'archplan-core/Docs/Quality/VALIDATION_RULES.json' },
         { label: 'VALIDATION_RULES.md（閲覧版）', kind: 'file', sub: 'archplan-core/Docs/Quality/VALIDATION_RULES.md' } ] },
@@ -185,16 +185,18 @@ export const config = {
   projectsSource: { sub: 'Program/Sessions/S-0007_開発手法設計/drafts/census/CENSUS_B_PJ系.md' },
 
   // Views ライブラリ8軸（DOC_GOVERNANCE_LIST View9の進捗以外・v2.3）。
-  // sub:null（品質基準枠）・未存在正本は「未整備」表示で無事故。開いた時のみ取得。
+  // 未存在正本は「未整備」表示で無事故。開いた時のみ取得。
+  // 2026-08-10 裁定反映: コム＝暫定顔SPECIES_LIST（COM_CATALOG.json新設まで）／
+  // 品質基準＝判定品質基準PJの枠組み文書（従来sub:null）／要件＝JSONの実在所在。
   librarySources: [
     { id: 'feature', label: '機能', sub: 'archplan-core/Docs/Features/FEATURE_LIST.json', type: 'json' },
-    { id: 'com', label: 'コム', sub: 'archplan-core/Docs/Species/COM_CATALOG.json', type: 'json' },
-    { id: 'condition', label: '設計条件', sub: 'archplan-core/Docs/Conditions/ELEMENT_CATALOG.md', type: 'md' },
+    { id: 'com', label: 'コム', sub: 'Projects/DataStructure/Works/W3_定義作成/SPECIES_LIST.md', type: 'md' },
+    { id: 'condition', label: '設計条件', sub: 'archplan-core/Docs/Conditions/DESIGN_CONDITION_CATALOG.md', type: 'md' },
     { id: 'operation', label: '操作', sub: 'Projects/OperationManagement/OPERATION_ROUTING_TABLE.md', type: 'md' },
     { id: 'screen', label: '画面', sub: 'Projects/ScreenManagement/SCREEN_LIST.md', type: 'md' },
     { id: 'project', label: 'プロジェクト', sub: 'Program/PROJECT_REGISTRY.md', type: 'md' },
-    { id: 'quality', label: '品質基準', sub: null, type: 'md' },
-    { id: 'requirement', label: '要件', sub: 'Docs/Requirements/REQUIREMENT_MAP_DATA.json', type: 'json' },
+    { id: 'quality', label: '品質基準', sub: 'Projects/判定品質基準/QUALITY_JUDGMENT_FRAMEWORK_v1_2026-07-26.md', type: 'md' },
+    { id: 'requirement', label: '要件', sub: 'Projects/RequirementManagement/Works/要件マップ構築/REQUIREMENT_MAP_DATA.json', type: 'json' },
   ],
 };
 
