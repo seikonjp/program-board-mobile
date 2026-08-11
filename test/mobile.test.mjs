@@ -2581,7 +2581,7 @@ test('㋒(便7) build number in index.html matches sw.js CACHE version', () => {
   assert.ok(bm, 'index.html に build 番号');
   assert.ok(cm, 'sw.js に pbm-shell-v 版数');
   assert.strictEqual(bm[1], cm[1], 'build 表記(' + bm[1] + ') と sw CACHE 版数(' + cm[1] + ') が一致');
-  assert.strictEqual(bm[1], '44', '本便=build 44（便13・Sheets一覧の rev キャッシュ。sw CACHE v44 と同期）');
+  assert.strictEqual(bm[1], '45', '本便=build 45（ボード進捗同期便2026-08-11・フロー俯瞰の同期反映。sw CACHE v45 と同期）');
   // 便13: Sheet核キャッシュの版数も build と同期（導出が変われば build が上がる＝旧い核を自動で捨てる）。
   const pm = /SHEET_CACHE_VERSION\s*=\s*(\d+)/.exec(readDoc('program.js'));
   assert.ok(pm, 'program.js に SHEET_CACHE_VERSION');
