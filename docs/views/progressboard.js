@@ -43,6 +43,7 @@ let expanded = new Set();
 let pbview = 'map';
 let flowData = null;      // 直近の詳細（/data/flow-view.json）
 let overviewData = null;  // フロー俯瞰（/data/flow-overview.json）
+let stageView = '第1弾';  // 弾ビュー（既定=第1弾・2026-08-15基幹回付①）|'全弾'
 
 function create(ctx) {
   currentCtx = ctx;
@@ -564,6 +565,8 @@ function flowOvRow(it, mapFeats) {
   const body = h('span', 'flow-item-body');
   body.appendChild(h('span', 'flow-item-label', it.label || it.name || it.code || ''));
   const meta = h('span', 'flow-item-meta');
+  // 弾ラベル（UNIT_REGISTRY stage欄・2026-08-15）。第1弾は強調・他は淡色。
+  if (it.stage) meta.appendChild(h('span', 'flow-stage-chip' + (it.stage === '第1弾' ? ' is-first' : ''), it.stage));
   if (it.kind) meta.appendChild(h('span', 'flow-kind', it.kind));
   if (it.code) meta.appendChild(h('span', 'flow-code', it.code));
   if (it.origin === 'inventory') meta.appendChild(h('span', 'flow-ref', '目録'));
@@ -597,18 +600,40 @@ function renderFlowOverview() {
   if (!p.sourcesOk || !p.sourcesOk.edges) head.appendChild(h('div', 'view-hint', '依存地図が読めないため状態は「不明」表示です。'));
   if (!p.sourcesOk || !p.sourcesOk.inventory) head.appendChild(h('div', 'view-hint', '機能外タスク目録が読めないため独立タスクは非表示です。'));
   head.appendChild(builtNote(p));
+
+  // 弾ビュー切替（既定=第1弾・2026-08-15基幹回付①・Mac板と同型）。表示だけを絞る（収支の正は上の行）。
+  const firstOnly = stageView === '第1弾';
+  const stageMatch = (it) => !firstOnly || it.stage === '第1弾';
+  const firstCount = (p.shelves || []).reduce((n, s) => n + (s.groups || []).reduce(
+    (m, g) => m + (g.items || []).filter((it) => it.stage === '第1弾').length, 0), 0);
+  const tg = h('div', 'flow-stageview-toggle');
+  const mkBtn = (label, mode) => {
+    const btn = h('button', 'flow-stageview-btn' + (stageView === mode ? ' is-active' : ''), label);
+    btn.onclick = () => { stageView = mode; renderFlowOverview(); };
+    return btn;
+  };
+  tg.appendChild(mkBtn('第1弾（' + firstCount + '件）', '第1弾'));
+  tg.appendChild(mkBtn('全弾', '全弾'));
+  if (firstOnly) tg.appendChild(h('span', 'flow-stageview-hint', '第1弾の単位だけを表示中（弾ラベルなしの目録行も隠れます）'));
+  head.appendChild(tg);
   overviewWrap.appendChild(head);
 
   for (const shelf of (p.shelves || [])) {
     if (shelf.key === 'unclassified' && shelf.count === 0) continue; // 0件が正常＝出さない
+    const groups = (shelf.groups || [])
+      .map((g) => ({ ...g, items: (g.items || []).filter(stageMatch) }))
+      .map((g) => ({ ...g, count: g.items.length }))
+      .filter((g) => g.count > 0);
+    const shownCount = groups.reduce((n, g) => n + g.count, 0);
+    if (firstOnly && shownCount === 0 && shelf.key !== 'unclassified') continue; // 第1弾ビューでは空棚を出さない
     const sec = h('div', 'flow-shelf flow-shelf-' + shelf.key + (shelf.key === 'unclassified' ? ' is-bad' : ''));
     const sh = h('div', 'flow-shelf-head');
     sh.appendChild(h('span', 'flow-shelf-title', shelf.title));
-    sh.appendChild(h('span', 'flow-shelf-count', shelf.count + '件'));
+    sh.appendChild(h('span', 'flow-shelf-count', firstOnly ? (shownCount + '件（全' + shelf.count + '件）') : (shelf.count + '件')));
     sec.appendChild(sh);
     if (shelf.note) sec.appendChild(h('div', 'flow-shelf-note', shelf.note));
-    if (shelf.count === 0) { sec.appendChild(h('div', 'flow-shelf-empty', '該当なし。')); overviewWrap.appendChild(sec); continue; }
-    for (const g of (shelf.groups || [])) {
+    if (shownCount === 0) { sec.appendChild(h('div', 'flow-shelf-empty', '該当なし。')); overviewWrap.appendChild(sec); continue; }
+    for (const g of groups) {
       const grp = h('div', 'flow-sysgroup');
       const gh = h('div', 'flow-sysgroup-head');
       gh.appendChild(h('span', 'flow-sysgroup-title', g.title));
