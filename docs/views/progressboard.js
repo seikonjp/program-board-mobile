@@ -44,6 +44,7 @@ let pbview = 'map';
 let flowData = null;      // 直近の詳細（/data/flow-view.json）
 let overviewData = null;  // フロー俯瞰（/data/flow-overview.json）
 let stageView = '第1弾';  // 弾ビュー（既定=第1弾・2026-08-15基幹回付①）|'全弾'
+let sphereView = 'all';   // 第1弾サブフィルタ=通常/ゲーム/共通（2026-08-17基幹回付）|'normal'|'game'|'shared'
 
 function create(ctx) {
   currentCtx = ctx;
@@ -616,12 +617,30 @@ function renderFlowOverview() {
   tg.appendChild(mkBtn('全弾', '全弾'));
   if (firstOnly) tg.appendChild(h('span', 'flow-stageview-hint', '第1弾の単位だけを表示中（弾ラベルなしの目録行も隠れます）'));
   head.appendChild(tg);
+
+  // 第1弾サブフィルタ=通常/ゲーム/共通（2026-08-17基幹回付・Mac板と同型）。
+  const sphereMatch = (it) => !firstOnly || sphereView === 'all' || it.sphere === sphereView;
+  if (firstOnly) {
+    const countOf = (sv) => (p.shelves || []).reduce((n, s2) => n + (s2.groups || []).reduce(
+      (m, g) => m + (g.items || []).filter((it) => it.stage === '第1弾' && (sv === 'all' || it.sphere === sv)).length, 0), 0);
+    const sg = h('div', 'flow-stageview-toggle flow-sphere-toggle');
+    const mkSphereBtn = (label, mode) => {
+      const b = h('button', 'flow-stageview-btn' + (sphereView === mode ? ' is-active' : ''), label);
+      b.onclick = () => { sphereView = mode; renderFlowOverview(); };
+      return b;
+    };
+    sg.appendChild(mkSphereBtn('すべて（' + countOf('all') + '）', 'all'));
+    sg.appendChild(mkSphereBtn('通常（' + countOf('normal') + '）', 'normal'));
+    sg.appendChild(mkSphereBtn('ゲーム（' + countOf('game') + '）', 'game'));
+    sg.appendChild(mkSphereBtn('共通（' + countOf('shared') + '）', 'shared'));
+    head.appendChild(sg);
+  }
   overviewWrap.appendChild(head);
 
   for (const shelf of (p.shelves || [])) {
     if (shelf.key === 'unclassified' && shelf.count === 0) continue; // 0件が正常＝出さない
     const groups = (shelf.groups || [])
-      .map((g) => ({ ...g, items: (g.items || []).filter(stageMatch) }))
+      .map((g) => ({ ...g, items: (g.items || []).filter((it) => stageMatch(it) && sphereMatch(it)) }))
       .map((g) => ({ ...g, count: g.items.length }))
       .filter((g) => g.count > 0);
     const shownCount = groups.reduce((n, g) => n + g.count, 0);
