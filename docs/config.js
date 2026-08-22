@@ -48,6 +48,8 @@ export const config = {
     { id: 'sessions', enabled: true, group: 'sessions' },
     // Projects タブ（便9・build 40・§5e・HANDOFF_K2便2）: CENSUS_B の 45PJ＋Review5＋残作業を一望。
     { id: 'projects', enabled: true, group: 'projects' },
+    // 制作タブ（便22・build 48・Mac板 便20/21 の移植）: アセット・設定のタイル管理＋俯瞰。読み取り専用。
+    { id: 'production', enabled: true, group: 'production' },
   ],
 
   // 最上位ナビ（6群・便9でProjectsを末尾に追加）。表示順＝この順。
@@ -58,6 +60,7 @@ export const config = {
     { id: 'views', label: 'Views' },
     { id: 'sessions', label: 'Sessions' },
     { id: 'projects', label: 'Projects' },
+    { id: 'production', label: '制作' },
   ],
 
   // Sheets ソース定義（パスはここに集約＝config化・読み取り専用＋💬コメント＋承認）。
@@ -183,6 +186,11 @@ export const config = {
   // sheetArchplanRoot（/ArchPlan）相対。統合台帳 K2a 適用後にパスを差し替える前提（config化）。
   // 未存在でも壊れない（loadProjects が available:false を返す）。
   projectsSource: { sub: 'Program/Sessions/S-0007_開発手法設計/drafts/census/CENSUS_B_PJ系.md' },
+
+  // 制作タブ（便22・build 48）。正本＝Mac板と同じ実ファイル（二重の正なし）。programRoot 相対。
+  // 3ファイル（asset_categories / asset_flows / asset_items）を読む。未存在でも壊れない
+  // （loadProduction が available:false ＋読めなかったファイル名を返す）。
+  productionSource: { dir: 'data/production' },
 
   // Views ライブラリ8軸（DOC_GOVERNANCE_LIST View9の進捗以外・v2.3）。
   // 未存在正本は「未整備」表示で無事故。開いた時のみ取得。

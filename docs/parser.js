@@ -2636,3 +2636,286 @@ export function buildProgressBoard(inp) {
     frontier: reg.frontier, meta: reg.meta,
   };
 }
+
+// ---------------------------------------------------------------------------
+// 制作タブ（便22・2026-08-23・Mac板 便20/21 の移植）— アセット・設定のタイル管理＋俯瞰
+//   Mac server.js と同名・挙動互換の純関数（二重の正を作らないため、導出はここに1本化して
+//   両板で同じ結果を出す。実データ照合はテストで両板を突き合わせる）。
+//   ゲーム基幹の裁定（2026-08-22）: 俯瞰の行＝大項目×フロー・列＝そのフローの段階そのまま／
+//   完了＝フローの最終段階に到達／アイテム側の count・target が棚の target に勝つ／
+//   段階の点列は3記号＝済●／飛ばした−／未○（飛ばしを済に見せない）。
+// ---------------------------------------------------------------------------
+
+export const PRODUCTION_DOT_MARKS = { done: '●', skipped: '−', todo: '○' };
+
+export function productionFlow(flows, key) {
+  const f = flows && key ? flows[key] : null;
+  if (!f || !Array.isArray(f.stages)) return null;
+  return { key, label: f.label || key, stages: f.stages.map((s) => ({ key: s[0], label: s[1] })) };
+}
+
+export function productionDots(flow, stageKey, skippedStages) {
+  if (!flow) return { index: -1, total: 0, label: '', dots: [], done: false, unknownStage: !!stageKey };
+  const skipped = new Set(Array.isArray(skippedStages) ? skippedStages : []);
+  const index = flow.stages.findIndex((s) => s.key === stageKey);
+  const dots = flow.stages.map((s, i) => {
+    let mark = 'todo';
+    if (index >= 0 && i <= index) mark = skipped.has(s.key) ? 'skipped' : 'done';
+    else if (skipped.has(s.key)) mark = 'skipped';
+    return { key: s.key, label: s.label, mark, glyph: PRODUCTION_DOT_MARKS[mark] };
+  });
+  return {
+    index,
+    total: flow.stages.length,
+    label: index >= 0 ? flow.stages[index].label : '',
+    dots,
+    done: index >= 0 && index === flow.stages.length - 1,
+    unknownStage: index < 0 && !!stageKey,
+  };
+}
+
+export function buildProductionTree(categories, items) {
+  const own = new Map();
+  for (const it of (items || [])) {
+    const c = String(it && it.category ? it.category : '');
+    own.set(c, (own.get(c) || 0) + 1);
+  }
+  const index = new Map();
+  const build = (nodes, prefix, inheritedFlow, topKey, depth) => (nodes || []).map((n) => {
+    const nodePath = prefix ? prefix + '/' + n.key : n.key;
+    const flow = n.flow || inheritedFlow || null;
+    const top = topKey || n.key;
+    const children = build(n.children, nodePath, flow, top, depth + 1);
+    const node = {
+      key: n.key,
+      path: nodePath,
+      label: n.label || n.key,
+      depth,
+      top,
+      flow,
+      target: (typeof n.target === 'number') ? n.target : null,
+      flatStart: n.flatStart === true,
+      note: n.note || '',
+      own: own.get(nodePath) || 0,
+      total: (own.get(nodePath) || 0) + children.reduce((a, c) => a + c.total, 0),
+      children,
+    };
+    index.set(nodePath, node);
+    return node;
+  });
+  const roots = build(categories, '', null, null, 1);
+  return { roots, index };
+}
+
+export function productionTrail(index, categoryPath) {
+  const parts = String(categoryPath || '').split('/').filter(Boolean);
+  const labels = [];
+  for (let i = 0; i < parts.length; i += 1) {
+    const p = parts.slice(0, i + 1).join('/');
+    const node = index.get(p);
+    labels.push(node ? node.label : parts[i]);
+  }
+  return labels;
+}
+
+export function decorateProductionItems(items, tree, flows) {
+  return (items || []).map((it) => {
+    const node = tree.index.get(String(it.category || ''));
+    const flow = productionFlow(flows, node ? node.flow : null);
+    const st = productionDots(flow, it.stage, it.skippedStages);
+    return {
+      ...it,
+      top: node ? node.top : '',
+      categoryKnown: !!node,
+      categoryTrail: productionTrail(tree.index, it.category),
+      flow: flow ? flow.key : null,
+      flowLabel: flow ? flow.label : '',
+      stageIndex: st.index,
+      stageLabel: st.label,
+      stageTotal: st.total,
+      stageDots: st.dots,
+      isDone: st.done,
+      unknownStage: st.unknownStage,
+      tags: Array.isArray(it.tags) ? it.tags : [],
+      variants: Array.isArray(it.variants) ? it.variants : [],
+      thumbnail: it.thumbnail || null,
+    };
+  });
+}
+
+export function productionFlowsOfTop(topNode) {
+  const seen = [];
+  const walk = (n) => {
+    if (n.flow && !seen.includes(n.flow)) seen.push(n.flow);
+    (n.children || []).forEach(walk);
+  };
+  walk(topNode);
+  return seen;
+}
+
+export function buildProductionOverview(tree, decorated, flows) {
+  const rows = [];
+  for (const top of tree.roots) {
+    const flowKeys = productionFlowsOfTop(top);
+    const multi = flowKeys.length > 1;
+    if (!flowKeys.length) {
+      rows.push({ topKey: top.key, topLabel: top.label, flow: null, flowLabel: '', splitByFlow: false, stages: [], total: 0, done: 0 });
+      continue;
+    }
+    for (const fk of flowKeys) {
+      const flow = productionFlow(flows, fk);
+      if (!flow) continue;
+      const mine = decorated.filter((it) => it.top === top.key && it.flow === fk);
+      rows.push({
+        topKey: top.key,
+        topLabel: top.label,
+        flow: fk,
+        flowLabel: flow.label,
+        splitByFlow: multi,
+        stages: flow.stages.map((s, i) => ({ key: s.key, label: s.label, count: mine.filter((it) => it.stageIndex === i).length })),
+        total: mine.length,
+        done: mine.filter((it) => it.isDone).length,
+      });
+    }
+  }
+  return rows;
+}
+
+export function buildProductionBars(tree, decorated) {
+  const byCat = new Map();
+  for (const it of decorated) {
+    if (!byCat.has(it.category)) byCat.set(it.category, []);
+    byCat.get(it.category).push(it);
+  }
+  const out = [];
+  const walk = (node) => {
+    const mine = byCat.get(node.path) || [];
+    const isShelf = !node.children.length || mine.length > 0;
+    if (isShelf) {
+      const counted = mine.filter((it) => typeof it.target === 'number' && it.target > 0);
+      let bar = null;
+      if (counted.length) {
+        bar = {
+          basis: 'item',
+          done: counted.reduce((a, it) => a + (typeof it.count === 'number' ? it.count : 0), 0),
+          target: counted.reduce((a, it) => a + it.target, 0),
+        };
+      } else if (typeof node.target === 'number' && node.target > 0) {
+        bar = { basis: 'category', done: mine.filter((it) => it.isDone).length, target: node.target };
+      }
+      out.push({
+        path: node.path,
+        top: node.top,
+        label: node.label,
+        trail: productionTrail(tree.index, node.path),
+        count: mine.length,
+        flatStart: node.flatStart,
+        note: node.note,
+        bar,
+      });
+    }
+    (node.children || []).forEach(walk);
+  };
+  tree.roots.forEach(walk);
+  return out;
+}
+
+export function productionTagList(decorated) {
+  const m = new Map();
+  for (const it of decorated) for (const t of it.tags) m.set(t, (m.get(t) || 0) + 1);
+  return [...m.entries()].map(([label, count]) => ({ label, count }));
+}
+
+// 進捗の節に出す棚＝目標のある棚＋アイテムが1件以上ある棚（Mac板 便21・裁定③）。
+export function prodShelvesWithProgress(bars) {
+  return (bars || []).filter((b) => b.bar || b.count > 0);
+}
+
+export function prodInShelf(item, shelfPath) {
+  if (!shelfPath) return true;
+  const c = String(item.category || '');
+  return c === shelfPath || c.indexOf(shelfPath + '/') === 0;
+}
+
+export function prodMatches(item, query, tag, stageLabel) {
+  if (tag && !(item.tags || []).includes(tag)) return false;
+  if (stageLabel && item.stageLabel !== stageLabel) return false;
+  const q = String(query || '').trim().toLowerCase();
+  if (!q) return true;
+  const hay = [item.name, item.labelJa, item.summary, item.note, item.stageLabel, (item.categoryTrail || []).join(' '), (item.tags || []).join(' ')]
+    .filter(Boolean).join(' ').toLowerCase();
+  return hay.indexOf(q) >= 0;
+}
+
+export function prodStageOptions(items) {
+  const m = new Map();
+  for (const it of (items || [])) {
+    if (!it.stageLabel) continue;
+    m.set(it.stageLabel, (m.get(it.stageLabel) || 0) + 1);
+  }
+  return [...m.entries()].map(([label, count]) => ({ label, count }));
+}
+
+export function prodQuantityText(item) {
+  const parts = [];
+  if (typeof item.count === 'number' && typeof item.target === 'number') parts.push(item.count + '/' + item.target);
+  else if (typeof item.count === 'number') parts.push(item.count + '件');
+  if ((item.variants || []).length) parts.push(item.variants.join('・'));
+  return parts.join(' ');
+}
+
+export function prodBarText(shelf) {
+  if (!shelf.bar) return shelf.count + '件';
+  return shelf.bar.done + '/' + shelf.bar.target + (shelf.bar.basis === 'item' ? '（そろえる件数）' : '（完了した件数）');
+}
+
+export function prodBarRatio(bar) {
+  if (!bar || !bar.target) return 0;
+  return Math.max(0, Math.min(1, bar.done / bar.target));
+}
+
+// 3ファイル（棚・フロー・アイテム）から画面が要る形を1つ作る（Mac板 productionPayload と同形）。
+export function buildProductionPayload({ categoriesJson, flowsJson, itemsJson, source }) {
+  const missing = [];
+  const unreadable = [];
+  const parse = (raw, name) => {
+    if (raw == null) { missing.push(name); return null; }
+    if (typeof raw !== 'string') return raw;
+    try { return JSON.parse(raw); } catch { unreadable.push(name); return null; }
+  };
+  const cats = parse(categoriesJson, 'asset_categories.json');
+  const flowsDoc = parse(flowsJson, 'asset_flows.json');
+  const itemsDoc = parse(itemsJson, 'asset_items.json');
+  const available = !!(cats && flowsDoc && itemsDoc);
+  if (!available) {
+    return {
+      available: false, source: source || '', missing, unreadable,
+      flows: {}, dotMarks: PRODUCTION_DOT_MARKS, tree: [], items: [], overview: [], bars: [], tags: [],
+      counts: { items: 0, shelves: 0, emptyShelves: 0, done: 0, unknownCategory: 0, unknownStage: 0 },
+    };
+  }
+  const flows = flowsDoc.flows || {};
+  const tree = buildProductionTree(cats.categories || [], itemsDoc.items || []);
+  const decorated = decorateProductionItems(itemsDoc.items || [], tree, flows);
+  const bars = buildProductionBars(tree, decorated);
+  const flowsOut = {};
+  for (const k of Object.keys(flows)) { const f = productionFlow(flows, k); if (f) flowsOut[k] = f; }
+  return {
+    available: true, source: source || '', missing: [], unreadable: [],
+    flows: flowsOut,
+    dotMarks: PRODUCTION_DOT_MARKS,
+    tree: tree.roots,
+    items: decorated,
+    overview: buildProductionOverview(tree, decorated, flows),
+    bars,
+    tags: productionTagList(decorated),
+    counts: {
+      items: decorated.length,
+      shelves: bars.length,
+      emptyShelves: bars.filter((b) => b.count === 0).length,
+      done: decorated.filter((it) => it.isDone).length,
+      unknownCategory: decorated.filter((it) => !it.categoryKnown).length,
+      unknownStage: decorated.filter((it) => it.unknownStage).length,
+    },
+  };
+}

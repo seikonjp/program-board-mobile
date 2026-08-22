@@ -5,7 +5,8 @@
 
 import test from 'node:test';
 import assert from 'node:assert';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
@@ -433,10 +434,10 @@ test('⑪ 混在桁 ID は数値順に採番・ソートされる', () => {
 // ---------------------------------------------------------------------------
 // ⑫ タブ順（v1.4）＋ Report タブ抽出（type=report・cardsForType 再利用）
 // ---------------------------------------------------------------------------
-test('⑫ 最上位ナビ6群（便9でProjectsを末尾に追加）＋Cards群の第2階層タブ順', () => {
-  // 最上位ナビ = Cards / Sheets / 進捗 / Views / Sessions / Projects（この順）
-  assert.deepStrictEqual(enabledGroups().map((g) => g.id), ['cards', 'sheets', 'progress', 'views', 'sessions', 'projects'], '群の順');
-  assert.deepStrictEqual(enabledGroups().map((g) => g.label), ['Cards', 'Sheets', '進捗', 'Views', 'Sessions', 'Projects'], '群のラベル');
+test('⑫ 最上位ナビ7群（便9でProjects・便22で制作を末尾に追加）＋Cards群の第2階層タブ順', () => {
+  // 最上位ナビ = Cards / Sheets / 進捗 / Views / Sessions / Projects / 制作（この順）
+  assert.deepStrictEqual(enabledGroups().map((g) => g.id), ['cards', 'sheets', 'progress', 'views', 'sessions', 'projects', 'production'], '群の順');
+  assert.deepStrictEqual(enabledGroups().map((g) => g.label), ['Cards', 'Sheets', '進捗', 'Views', 'Sessions', 'Projects', '制作'], '群のラベル');
   // Cards 群の第2階層タブ順（v1.8 の8タブを内包）
   assert.deepStrictEqual(
     enabledViewIdsForGroup('cards'),
@@ -449,12 +450,14 @@ test('⑫ 最上位ナビ6群（便9でProjectsを末尾に追加）＋Cards群�
   assert.deepStrictEqual(enabledViewIdsForGroup('views'), ['views']);
   assert.deepStrictEqual(enabledViewIdsForGroup('sessions'), ['sessions']);
   assert.deepStrictEqual(enabledViewIdsForGroup('projects'), ['projects'], 'Projects群の単一ビュー（便9）');
+  assert.deepStrictEqual(enabledViewIdsForGroup('production'), ['production'], '制作群の単一ビュー（便22・タイル/俯瞰はビュー内の切替）');
   assert.strictEqual(viewGroup('board'), 'cards');
   assert.strictEqual(viewGroup('sheets'), 'sheets');
   assert.strictEqual(viewGroup('progressboard'), 'progress');
   assert.strictEqual(viewGroup('projects'), 'projects');
+  assert.strictEqual(viewGroup('production'), 'production');
   // enabledViewIds は全群のビューを config 順で返す（動的 import 用）
-  assert.deepStrictEqual(enabledViewIds(), ['board', 'reference', 'knowledge', 'consult', 'decision', 'report', 'tray', 'memo', 'completed', 'sheets', 'progressboard', 'views', 'sessions', 'projects']);
+  assert.deepStrictEqual(enabledViewIds(), ['board', 'reference', 'knowledge', 'consult', 'decision', 'report', 'tray', 'memo', 'completed', 'sheets', 'progressboard', 'views', 'sessions', 'projects', 'production']);
 });
 
 test('⑫b cardsForType(type=report) は report カードのみ抽出（Report タブ）', () => {
@@ -2581,7 +2584,7 @@ test('㋒(便7) build number in index.html matches sw.js CACHE version', () => {
   assert.ok(bm, 'index.html に build 番号');
   assert.ok(cm, 'sw.js に pbm-shell-v 版数');
   assert.strictEqual(bm[1], cm[1], 'build 表記(' + bm[1] + ') と sw CACHE 版数(' + cm[1] + ') が一致');
-  assert.strictEqual(bm[1], '47', '本便=build 47（実行レーン2026-08-17・ゲーム第1弾フィルタ=通常/ゲーム/共通サブフィルタ。sw CACHE v47 と同期）');
+  assert.strictEqual(bm[1], '48', '本便=build 48（便22・制作カテゴリの移植。sw CACHE v48 と同期）');
   // 便13: Sheet核キャッシュの版数も build と同期（導出が変われば build が上がる＝旧い核を自動で捨てる）。
   const pm = /SHEET_CACHE_VERSION\s*=\s*(\d+)/.exec(readDoc('program.js'));
   assert.ok(pm, 'program.js に SHEET_CACHE_VERSION');
@@ -3077,4 +3080,105 @@ test('便13-C loadSheetBoard: キャッシュは上限で剪定され、上限0�
     assert.strictEqual(sc0.entries.length, 8, '上限0でも一覧は全件出る');
     assert.strictEqual(b0.fetch.cached, 0, '何も残らない');
   });
+});
+
+// ---------------------------------------------------------------------------
+// ㋞(便22) 制作タブ — Mac板 便20/21 の移植。
+//   狙い＝①導出がMac板と1バイトも違わないこと（二重の正を作らない＝実データで両板を突き合わせる）
+//         ②Dropbox越しに3ファイルを読んで組み立てられること ③未整備・壊れた入力で壊れないこと
+//         ④殻（sw.js）と群ナビに新ビューが載っていること。
+// ---------------------------------------------------------------------------
+
+test('㋞(便22) 制作の導出＝Mac板 server.js と完全一致（実データ・二重の正なし）', async (t) => {
+  const macServer = resolve(HERE, '..', '..', 'program-board', 'server.js');
+  const dataDir = resolve(HERE, '..', '..', '..', 'Program', 'data', 'production');
+  if (!existsSync(macServer) || !existsSync(dataDir)) { t.skip('Mac板または正本データが無い環境'); return; }
+  const require = createRequire(import.meta.url);
+  const S = require(macServer);
+  const mac = S.productionPayload();
+
+  const mob = P.buildProductionPayload({
+    categoriesJson: readFileSync(resolve(dataDir, 'asset_categories.json'), 'utf8'),
+    flowsJson: readFileSync(resolve(dataDir, 'asset_flows.json'), 'utf8'),
+    itemsJson: readFileSync(resolve(dataDir, 'asset_items.json'), 'utf8'),
+    source: mac.source, // source だけは板ごとの表記（Mac=Program相対／モバイル=Dropbox絶対）
+  });
+
+  assert.strictEqual(mob.available, true, '正本3ファイルが読める');
+  // 画面が使う導出はすべて一致させる（1つでもずれたら、どちらかの板が違う数字を出している）
+  assert.deepStrictEqual(mob.counts, mac.counts, '件数（全件・棚・空棚・完了・読めなかった数）が一致');
+  assert.deepStrictEqual(mob.dotMarks, mac.dotMarks, '段階の記号が一致（済●／飛ばした−／未○）');
+  assert.deepStrictEqual(mob.tree, mac.tree, '棚ツリーが一致（フローの継承・0件の棚・下位を含む件数）');
+  assert.deepStrictEqual(mob.items, mac.items, 'アイテムの段階の点列・棚の道筋が一致');
+  assert.deepStrictEqual(mob.overview, mac.overview, '俯瞰の行と列が一致');
+  assert.deepStrictEqual(mob.bars, mac.bars, '棚ごとの進捗バーが一致（アイテム側優先の二重計上回避を含む）');
+  assert.deepStrictEqual(mob.tags, mac.tags, 'タグ一覧が一致');
+  assert.deepStrictEqual(mob.flows, mac.flows, '作成フローの定義が一致');
+  // 実データの現況（採れなくなったら検出する）
+  assert.strictEqual(mob.counts.unknownCategory, 0, '台帳に無い棚を指すアイテムは0件');
+  assert.strictEqual(mob.counts.unknownStage, 0, 'フローに無い段階を指すアイテムは0件');
+  assert.strictEqual(mob.overview.length, 11, '大項目10のうち生きものだけ2フロー＝11行');
+});
+
+test('㋞b(便22) program.loadProduction: Dropbox越しに3ファイルを読んで組み立てる', async () => {
+  const R = '/ArchPlan/Program/data/production';
+  const cats = { version: 1, categories: [
+    { key: 'nature', label: '自然', children: [{ key: 'trees', label: '樹木', flow: 'model', target: 3 }] },
+    { key: 'empty', label: '空の大項目', flow: 'model' },
+  ] };
+  const flows = { version: 1, flows: { model: { label: 'モデル', stages: [['design', 'デザイン'], ['make', '3D作成'], ['verify', '実機確認']] } } };
+  const items = { version: 1, items: [
+    { id: 'a', category: 'nature/trees', name: 'oak', stage: 'verify', skippedStages: ['make'] },
+    { id: 'b', category: 'nature/trees', name: 'pine', stage: 'design' },
+  ] };
+  const { program } = mockProgram({
+    [R + '/asset_categories.json']: JSON.stringify(cats),
+    [R + '/asset_flows.json']: JSON.stringify(flows),
+    [R + '/asset_items.json']: JSON.stringify(items),
+  }, { productionSource: APP_CONFIG.productionSource });
+
+  const p = await program.loadProduction();
+  assert.strictEqual(p.available, true);
+  assert.strictEqual(p.source, R, 'もとの所在をそのまま出す（Mac板と同じ実ファイル）');
+  assert.strictEqual(p.counts.items, 2);
+  assert.strictEqual(p.tree.length, 2, '0件の大項目も落とさない');
+  assert.strictEqual(p.overview.length, 2, '0件の大項目も俯瞰の行に出る');
+  const oak = p.items.find((x) => x.id === 'a');
+  assert.deepStrictEqual(oak.stageDots.map((d) => d.glyph), ['●', '−', '●'], '飛ばした段階を済に見せない');
+  assert.strictEqual(oak.isDone, true, '最終段階に到達＝完了');
+  const shelf = p.bars.find((b) => b.path === 'nature/trees');
+  assert.strictEqual(shelf.bar.basis, 'category');
+  assert.strictEqual(shelf.bar.done, 1, '完了は1件（oakのみ）');
+  assert.strictEqual(shelf.bar.target, 3);
+});
+
+test('㋞c(便22) program.loadProduction: 未整備・壊れた入力でも壊れない（読めなかったファイルを名指し）', async () => {
+  const R = '/ArchPlan/Program/data/production';
+  const { program: empty } = mockProgram({}, { productionSource: APP_CONFIG.productionSource });
+  const p1 = await empty.loadProduction();
+  assert.strictEqual(p1.available, false);
+  assert.deepStrictEqual(p1.missing.sort(), ['asset_categories.json', 'asset_flows.json', 'asset_items.json']);
+  assert.deepStrictEqual(p1.tree, []);
+  assert.strictEqual(p1.counts.items, 0);
+
+  const { program: broken } = mockProgram({
+    [R + '/asset_categories.json']: '{ "version": 1, "categories": [] }',
+    [R + '/asset_flows.json']: '{ "version": 1, "flows": {} }',
+    [R + '/asset_items.json']: '{ これはJSONではない',
+  }, { productionSource: APP_CONFIG.productionSource });
+  const p2 = await broken.loadProduction();
+  assert.strictEqual(p2.available, false);
+  assert.deepStrictEqual(p2.unreadable, ['asset_items.json'], '在るが読めない＝missingではなく unreadable');
+  assert.deepStrictEqual(p2.missing, []);
+});
+
+test('㋞d(便22) 制作ビューが殻（sw.js）に載り、群ナビ・ビュー登録と揃っている', () => {
+  const sw = readDoc('sw.js');
+  assert.ok(sw.includes("'./views/production.js'"), 'sw.js の SHELL に制作ビュー（オフラインでも殻が揃う）');
+  assert.ok(/pbm-shell-v48/.test(sw), 'sw CACHE 版数＝48');
+  const view = readDoc('views/production.js');
+  assert.ok(/registerView\(\{[\s\S]*id: 'production'/.test(view), 'ビューが自己登録する（既存コードを編集しない設計）');
+  assert.ok(!/addSheetComment|approveSheet|upload|files\/upload/.test(view), 'v1は読み取り専用＝書き込みの口を持たない');
+  // 画面に出す記号は必ず凡例で宣言する（凡例に無い記号を出さない）
+  assert.ok(view.includes('●') && view.includes('−') && view.includes('○'), '3記号を凡例で宣言');
 });

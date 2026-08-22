@@ -707,6 +707,19 @@ export function createProgram(dropbox, config) {
     };
   }
 
+  // 制作タブ（便22・Mac板 便20/21 の移植）: Program/data/production/ の3ファイルを読み取り→機械導出。
+  //   正本はMac板と同じ実ファイル（二重の正なし）。読み取り専用＝書き込みAPIは持たない。
+  //   3ファイルのどれかが無くても壊れない（available:false＋読めなかったファイルを名指し）。
+  async function loadProduction() {
+    const dir = (config.productionSource && config.productionSource.dir) || 'data/production';
+    const [categoriesJson, flowsJson, itemsJson] = await Promise.all([
+      readText(dir + '/asset_categories.json'),
+      readText(dir + '/asset_flows.json'),
+      readText(dir + '/asset_items.json'),
+    ]);
+    return P.buildProductionPayload({ categoriesJson, flowsJson, itemsJson, source: join(root, dir) });
+  }
+
   // 作業フロービュー（フロー俯瞰・直近の詳細）: ビルド時に焼き込んだ静的ペイロードを読むだけ。
   //   モバイルは 245KB の census 生データ・重い純関数を運ばない＝導出済みの小さなJSONを fetch する
   //   （生成は scripts/build-flow.cjs が Mac 版 server.js の純関数で実行）。同一オリジンの静的ファイル。
@@ -869,7 +882,7 @@ export function createProgram(dropbox, config) {
   const SHEET_CACHE_KEY = 'pbm_cache_sheetcore';
   // 版数は殻の build 番号と揃える（index.html / sw.js と同期・㋒テストが監視）。
   // 導出（parser）が変われば必ず build も上がる＝旧い核は自動で捨てられる。
-  const SHEET_CACHE_VERSION = 47;
+  const SHEET_CACHE_VERSION = 48;
   // 上限。実測（2026-08-03・172件）で 91KB＝平均 478B/件。localStorage 全体 5MB 前後の想定に対し十分な余裕を取る。
   const SHEET_CACHE_MAX_BYTES = config.sheetCacheMaxBytes || 1500000;
   let sheetCoreCache = null;          // Map<dropboxPath, { rev, core }>
@@ -1116,6 +1129,7 @@ export function createProgram(dropbox, config) {
     loadFlowView,
     loadFlowOverview,
     loadProjects,
+    loadProduction,
     listLibrary,
     readLibraryItem,
     // 便4（§4）: RDSナビ・Library原典
