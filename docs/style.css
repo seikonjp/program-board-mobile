@@ -1257,3 +1257,12 @@ textarea.sheet-comment-input { flex: 1; min-height: 40px; resize: none; }
 .gd-thread-row { font-size: 12px; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); }
 .gd-thread-text { font-size: 13px; font-family: inherit; padding: 8px; border: 1px solid var(--line); border-radius: 8px; width: 100%; }
 .gd-thread-form .btn-secondary { min-height: var(--tap); }
+
+/* 便24: 制作のタブ＝[タイル]−[大項目10]−[俯瞰]。狭い画面では折り返す（横スクロールで隠れると
+   「どの大項目があるか」が見えなくなり、空棚の可視化という目的に反するため）。 */
+.prod-tabs { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 10px; }
+.prod-tab {
+  border: 1px solid var(--line); background: var(--surface); color: var(--ink-soft);
+  font-size: 12px; font-family: inherit; padding: 7px 10px; border-radius: 8px; min-height: 34px;
+}
+.prod-tab.is-active { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600; }

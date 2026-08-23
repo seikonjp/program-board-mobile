@@ -3542,3 +3542,19 @@ export function buildGameDataDetail({ payload, type, docs, files, checks }) {
   detail.items = f ? f.items : null;
   return detail;
 }
+
+// ---- 便24: 制作のビュー切替（[タイル]−[大項目]−[俯瞰]）。Mac板 app.js と同名・挙動互換 ----
+
+// タブの並び。大項目のラベル・順序は棚の正本そのまま（語を作らない・並べ替えない）。
+export function prodTabs(tree) {
+  return [{ key: 'tiles', label: 'タイル' }]
+    .concat((tree || []).map((n) => ({ key: n.path, label: n.label, count: n.total })))
+    .concat([{ key: 'overview', label: '俯瞰' }]);
+}
+
+// いまどのタブに居るか。下位の棚を選んでいるときはその大項目のタブを点ける。
+export function prodActiveTab(view, shelf) {
+  if (view === 'overview') return 'overview';
+  if (!shelf) return 'tiles';
+  return String(shelf).split('/')[0];
+}

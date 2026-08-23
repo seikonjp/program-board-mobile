@@ -2586,7 +2586,7 @@ test('㋒(便7) build number in index.html matches sw.js CACHE version', () => {
   assert.ok(bm, 'index.html に build 番号');
   assert.ok(cm, 'sw.js に pbm-shell-v 版数');
   assert.strictEqual(bm[1], cm[1], 'build 表記(' + bm[1] + ') と sw CACHE 版数(' + cm[1] + ') が一致');
-  assert.strictEqual(bm[1], '49', '本便=build 49（便23・データタブの移植＝§0-9 2板同内容の原則。sw CACHE v49 と同期）');
+  assert.strictEqual(bm[1], '50', '本便=build 50（便24・制作のビュー切替＝[タイル]−[大項目]−[俯瞰]。sw CACHE v50 と同期）');
   // 便13: Sheet核キャッシュの版数も build と同期（導出が変われば build が上がる＝旧い核を自動で捨てる）。
   const pm = /SHEET_CACHE_VERSION\s*=\s*(\d+)/.exec(readDoc('program.js'));
   assert.ok(pm, 'program.js に SHEET_CACHE_VERSION');
@@ -3190,6 +3190,29 @@ test('㋞d(便22) 制作ビューが殻（sw.js）に載り、群ナビ・ビュ
 //   狙い＝①導出がMac板と全項目一致すること（二重の正の検出器）②Dropbox越しの読み取り
 //         ③書き込み2つがSheetと同水準の安全機構＋📱印で動くこと ④殻・群ナビの配線。
 // ---------------------------------------------------------------------------
+
+test('㋠(便24) 制作のタブ＝[タイル]−[大項目]−[俯瞰]・いま居るタブ（Mac板と挙動一致）', async (t) => {
+  const tree = [
+    { path: 'beings', label: '生きもの', total: 4 },
+    { path: 'nature', label: '自然', total: 9 },
+  ];
+  assert.deepStrictEqual(P.prodTabs(tree).map((x) => x.key), ['tiles', 'beings', 'nature', 'overview'], '両端が固定・間は大項目');
+  assert.deepStrictEqual(P.prodTabs(tree).map((x) => x.label), ['タイル', '生きもの', '自然', '俯瞰'], 'ラベルは棚の正本そのまま');
+  assert.deepStrictEqual(P.prodTabs([]).map((x) => x.key), ['tiles', 'overview'], 'データ未取得でも両端は出る');
+  assert.strictEqual(P.prodActiveTab('tiles', null), 'tiles');
+  assert.strictEqual(P.prodActiveTab('tiles', 'nature'), 'nature');
+  assert.strictEqual(P.prodActiveTab('tiles', 'nature/trees/tall'), 'nature', '下位の棚に居てもその大項目が点く');
+  assert.strictEqual(P.prodActiveTab('overview', 'nature'), 'overview');
+
+  // Mac板の同名関数と結果が一致すること（二重の正を作らない）
+  const macApp = resolve(HERE, '..', '..', 'program-board', 'public', 'app.js');
+  if (!existsSync(macApp)) { t.skip('Mac板が無い環境'); return; }
+  const A = createRequire(import.meta.url)(macApp);
+  assert.deepStrictEqual(P.prodTabs(tree), A.prodTabs(tree), 'タブの並びがMac板と一致');
+  for (const [v, sh] of [['tiles', null], ['tiles', 'nature'], ['tiles', 'nature/trees/tall'], ['overview', 'nature']]) {
+    assert.strictEqual(P.prodActiveTab(v, sh), A.prodActiveTab(v, sh), 'いま居るタブの判定がMac板と一致: ' + v + '/' + sh);
+  }
+});
 
 test('㋟(便23) データの導出＝Mac板 server.js と完全一致（実データ・二重の正なし）', async (t) => {
   const macServer = resolve(HERE, '..', '..', 'program-board', 'server.js');

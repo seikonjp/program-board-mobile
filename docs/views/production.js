@@ -10,7 +10,7 @@ import { registerView } from '../registry.js';
 import { h } from './shared.js';
 import {
   prodInShelf, prodMatches, prodStageOptions, prodQuantityText,
-  prodBarText, prodBarRatio, prodShelvesWithProgress,
+  prodBarText, prodBarRatio, prodShelvesWithProgress, prodTabs, prodActiveTab,
 } from '../parser.js';
 
 // 大項目ごとの仮のサムネイル（画像は後便・Mac板と同じ割り当て）。
@@ -26,14 +26,9 @@ const state = { data: null, view: 'tiles', shelf: null, query: '', tag: '', stag
 function create() {
   root = h('div', 'production');
 
-  switchBar = h('div', 'pb-switch');
-  [['tiles', 'タイル'], ['overview', '俯瞰']].forEach(([key, label]) => {
-    const b = h('button', 'pb-switch-btn' + (key === state.view ? ' is-active' : ''), label);
-    b.dataset.prodview = key;
-    b.onclick = () => setView(key);
-    switchBar.appendChild(b);
-  });
+  switchBar = h('div', 'prod-tabs');
   root.appendChild(switchBar);
+  renderTabs();
 
   toolbar = h('div', 'prod-toolbar');
   searchEl = h('input', 'k-search');
@@ -77,11 +72,30 @@ function legendDetails() {
   return d;
 }
 
-function setView(view) {
-  state.view = view;
-  if (root) root.querySelectorAll('.pb-switch-btn').forEach((b) => b.classList.toggle('is-active', b.dataset.prodview === view));
-  if (toolbar) toolbar.hidden = (view !== 'tiles');
+// 便24: タブ＝[タイル]−[大項目]−[俯瞰]。大項目タブはその大項目へ直接入る。
+function setView(key) {
+  if (key === 'overview') state.view = 'overview';
+  else {
+    state.view = 'tiles';
+    state.shelf = (key === 'tiles') ? null : key;
+  }
+  if (toolbar) toolbar.hidden = (state.view !== 'tiles');
+  renderTabs();
   render();
+}
+
+// タブの帯を組み立て直す（データが来てから＝大項目は棚の正本から取る）。
+function renderTabs() {
+  if (!switchBar) return;
+  const active = prodActiveTab(state.view, state.shelf);
+  switchBar.textContent = '';
+  for (const t of prodTabs(state.data ? state.data.tree : [])) {
+    const b = h('button', 'prod-tab' + (t.key === active ? ' is-active' : ''), t.label);
+    b.dataset.prodview = t.key;
+    if (typeof t.count === 'number') b.title = t.label + '（' + t.count + '件）';
+    b.onclick = () => setView(t.key);
+    switchBar.appendChild(b);
+  }
 }
 
 async function onShow(ctx) {
@@ -93,6 +107,7 @@ async function load(ctx) {
   try {
     state.data = await ctx.program.loadProduction();
     fillFilters();
+    renderTabs();
     render();
   } catch (e) {
     if (bodyEl) { bodyEl.textContent = ''; bodyEl.appendChild(h('div', 'view-hint', '制作データの読み込みに失敗: ' + (e && e.message ? e.message : e))); }
@@ -166,7 +181,7 @@ function shelfPicker() {
     if (flatStart) b.appendChild(h('span', 'prod-chip', '分割予定'));
     b.appendChild(h('span', 'prod-tree-count', String(count)));
     if (note) b.title = note;
-    b.onclick = () => { state.shelf = path; render(); };
+    b.onclick = () => { state.shelf = path; renderTabs(); render(); };
     return b;
   };
   list.appendChild(rowEl('すべて', null, state.data.counts.items, 0, false, ''));
