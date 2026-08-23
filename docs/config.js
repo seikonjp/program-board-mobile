@@ -50,6 +50,8 @@ export const config = {
     { id: 'projects', enabled: true, group: 'projects' },
     // 制作タブ（便22・build 48・Mac板 便20/21 の移植）: アセット・設定のタイル管理＋俯瞰。読み取り専用。
     { id: 'production', enabled: true, group: 'production' },
+    // データタブ（便23・build 49・Mac板 便16〜18 の移植・§0-9 2板同内容の原則）: ゲームマスタデータの閲覧・進捗。
+    { id: 'gamedata', enabled: true, group: 'gamedata' },
   ],
 
   // 最上位ナビ（6群・便9でProjectsを末尾に追加）。表示順＝この順。
@@ -61,6 +63,7 @@ export const config = {
     { id: 'sessions', label: 'Sessions' },
     { id: 'projects', label: 'Projects' },
     { id: 'production', label: '制作' },
+    { id: 'gamedata', label: 'データ' },
   ],
 
   // Sheets ソース定義（パスはここに集約＝config化・読み取り専用＋💬コメント＋承認）。
@@ -191,6 +194,18 @@ export const config = {
   // 3ファイル（asset_categories / asset_flows / asset_items）を読む。未存在でも壊れない
   // （loadProduction が available:false ＋読めなかったファイル名を返す）。
   productionSource: { dir: 'data/production' },
+
+  // データタブ（便23・build 49）。正本＝Mac板と同じ実ファイル（二重の正なし）。
+  //   ledger/schema/dataDir/defDir ＝ sheetArchplanRoot（/ArchPlan）相対。
+  //   checks（確認の記録）だけ programRoot 相対＝ボードの書き込み許可域（定義文書には書かない）。
+  //   いずれも未存在で壊れない（台帳が無ければ available:false・フォルダが無ければ空一覧）。
+  gameData: {
+    ledgerSub: 'Projects/GameMode/GAME_MASTER_DATA.md',
+    schemaSub: 'Projects/GameMode/GAME_DATA_SCHEMA.md',
+    dataDirSub: 'game-prototype/data',
+    defDirSub: 'Projects/GameMode/Data',
+    checksSub: 'GameData/DATA_ROW_CHECKS.json',
+  },
 
   // Views ライブラリ8軸（DOC_GOVERNANCE_LIST View9の進捗以外・v2.3）。
   // 未存在正本は「未整備」表示で無事故。開いた時のみ取得。

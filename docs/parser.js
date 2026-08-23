@@ -2919,3 +2919,626 @@ export function buildProductionPayload({ categoriesJson, flowsJson, itemsJson, s
     },
   };
 }
+
+
+// ---------------------------------------------------------------------------
+// データタブ（便23・2026-08-23・Mac板 便16〜18 のモバイル移植）— ゲームマスタデータの閲覧・進捗
+//   §0-9（2板同内容の原則・2026-08-23ユーザー裁定）の適用第1弾。
+//   下記は Mac server.js から移した純関数（同名・挙動互換）。実データで両板を突き合わせる
+//   テストを置いてある＝どちらかが違う結果を出したら落ちる（二重の正を作らない）。
+//   唯一の相違＝行の sha256 の求め方（下記 parseGameDefinitionDoc の注記）。
+// ---------------------------------------------------------------------------
+// 状態ライフサイクル①〜⑥の既定（台帳§3bから読めなかった場合の控え）。
+export const GAME_LIFECYCLE_FALLBACK = [
+  { n: 1, mark: '①', label: '種確定' },
+  { n: 2, mark: '②', label: '項目確定' },
+  { n: 3, mark: '③', label: '叩き台v1' },
+  { n: 4, mark: '④', label: '共同編集/監修中' },
+  { n: 5, mark: '⑤', label: 'PT検証済' },
+  { n: 6, mark: '⑥', label: '確定v1' },
+];
+export const GAME_LIFECYCLE_MARKS = ['①', '②', '③', '④', '⑤', '⑥'];
+
+
+export function parseGameDocTitle(text) {
+  const line = (String(text == null ? '' : text).split('\n').find((l) => /^#\s+/.test(l)) || '').trim();
+  const out = { raw: line, version: '', date: '', statusNote: '' };
+  if (!line) return out;
+  const v = /(v\d+(?:\.\d+)*)/.exec(line);
+  if (v) out.version = v[1];
+  const p = /[（(]([^）)]*)[）)]\s*$/.exec(line);
+  if (p) {
+    const parts = p[1].split('・').map((s) => s.replace(/\*\*/g, '').trim()).filter((s) => s !== '');
+    const rest = [];
+    parts.forEach((s) => { if (/^\d{4}-\d{2}-\d{2}$/.test(s)) out.date = s; else rest.push(s); });
+    out.statusNote = rest.join('・');
+  }
+  return out;
+}
+
+// バッククォート内の識別子を取り出す（無ければ素のテキスト）。
+export function gameCellToken(cell) {
+  const s = String(cell == null ? '' : cell).trim();
+  const m = /`([^`]+)`/.exec(s);
+  return (m ? m[1] : s).trim();
+}
+
+// §3b の管理クラス行 → クラス定義（純関数）。
+//   `**A=あなた主筆・私が確認**（dialogue・commission・…）／**C=…**（残り全種）`
+//   括弧内を「・」で割り、種名と照合。「残り」を含むクラス＝既定クラス。
+export function parseGameClassRule(text) {
+  const re = /\*\*([A-Z])=([^*]+)\*\*[（(]([^）)]*)[）)]/g;
+  const readLine = (line) => {
+    const classes = [];
+    re.lastIndex = 0;
+    let m;
+    while ((m = re.exec(line)) !== null) {
+      classes.push({
+        key: m[1],
+        label: m[2].trim(),
+        tokens: m[3].split('・').map((s) => gameCellToken(s)).filter((s) => s !== ''),
+        isDefault: /残り/.test(m[3]),
+      });
+    }
+    return classes;
+  };
+  // 「管理クラス」に触れる行は前書きにもあり得るため、割当を実際に書いている行（様式に合う行）を採る。
+  const lines = String(text == null ? '' : text).split('\n').filter((l) => /管理クラス/.test(l));
+  for (const line of lines) {
+    const classes = readLine(line);
+    if (classes.length) return { line: line.trim(), classes };
+  }
+  return { line: (lines[0] || '').trim(), classes: [] };
+}
+
+// ライフサイクル①〜⑥の段名を台帳§3bから導出（読めなければ既定）。
+export function parseGameLifecycle(text) {
+  const lines = String(text == null ? '' : text).split('\n').filter((l) => /ライフサイクル/.test(l) && /①/.test(l));
+  for (const line of lines) {
+    const stages = parseGameLifecycleLine(line);
+    if (stages.length === GAME_LIFECYCLE_MARKS.length) return stages;
+  }
+  return GAME_LIFECYCLE_FALLBACK.map((s) => ({ ...s, rawLabel: s.label }));
+}
+export function parseGameLifecycleLine(line) {
+  const stages = [];
+  GAME_LIFECYCLE_MARKS.forEach((mark, i) => {
+    const next = GAME_LIFECYCLE_MARKS[i + 1];
+    const re = new RegExp(mark + '([^' + GAME_LIFECYCLE_MARKS.join('') + '→]*)');
+    const mm = re.exec(line);
+    if (!mm) return;
+    const rawLabel = mm[1].replace(/→\s*$/, '').trim();
+    if (rawLabel === '') return;
+    if (next && line.indexOf(next) < 0) return;
+    // 短い段名＝末尾の句点・補足（…）を落とした形（原文は rawLabel に残す＝偽装しない）
+    const label = rawLabel.replace(/[。.\s]+$/, '').replace(/[（(][^）)]*[）)]\s*$/, '').trim();
+    stages.push({ n: i + 1, mark, label: label || rawLabel, rawLabel });
+  });
+  return stages;
+}
+
+// 台帳md全文 → { title, categories, types, classRule, lifecycle, malformed }（純関数）。
+//   categories[i] = { key:'A', label:'住人系', labelEn:'Character', count }
+//   types[i] = { type, nameJa, defines, mainFields, relations, category, categoryLabel,
+//                managementClass, classLabel, classSource:'ledger', notes[] }
+export function parseGameMasterData(text) {
+  const src = String(text == null ? '' : text);
+  const lines = src.split('\n');
+  const categories = [];
+  const types = [];
+  const malformed = [];
+  let cat = null;
+
+  for (const line of lines) {
+    const h2 = /^##\s+(.*)$/.exec(line);
+    if (h2) {
+      const t = h2[1].trim();
+      const cm = /^([A-F])\.\s*(.+?)(?:[（(]([^）)]*)[）)])?\s*$/.exec(t);
+      if (cm) { cat = { key: cm[1], label: cm[2].trim(), labelEn: (cm[3] || '').trim(), count: 0 }; categories.push(cat); }
+      else cat = null; // §2/§3b 等は種の表ではない
+      continue;
+    }
+    if (!cat) continue;
+    if (!/^\s*\|.*\|\s*$/.test(line)) continue;
+    if (isTableSeparator(line)) continue;
+    const cells = splitTableRow(line);
+    const first = String(cells[0] || '').trim();
+    if (first === '正式名' || first === '') continue; // ヘッダ行・空セル
+    if (cells.length < 2) { malformed.push({ category: cat.key, reason: 'few-cells', raw: line.trim() }); continue; }
+    const type = gameCellToken(cells[0]);
+    if (type === '') { malformed.push({ category: cat.key, reason: 'empty-type', raw: line.trim() }); continue; }
+    types.push({
+      type,
+      nameJa: String(cells[1] || '').trim(),
+      defines: String(cells[2] || '').trim(),
+      mainFields: String(cells[3] || '').trim(),
+      relations: String(cells[4] || '').trim(),
+      category: cat.key,
+      categoryLabel: cat.label,
+      managementClass: '', classLabel: '', classSource: 'none', notes: [],
+    });
+    cat.count++;
+  }
+
+  // 管理クラスの割当（§3b・種名照合／不一致トークンは注記として保持）
+  const rule = parseGameClassRule(src);
+  const byType = Object.create(null);
+  types.forEach((t) => { byType[t.type] = t; });
+  const names = types.map((t) => t.type).sort((a, b) => b.length - a.length); // 長い名から照合
+  const assign = (t, cls) => { t.managementClass = cls.key; t.classLabel = cls.label; t.classSource = 'ledger'; };
+  const unmatched = [];
+  rule.classes.filter((c) => !c.isDefault).forEach((cls) => {
+    cls.tokens.forEach((tok) => {
+      if (byType[tok]) { assign(byType[tok], cls); return; }
+      // 種名を含む記述トークン（例「shop/goodsの固有名」）＝種そのものの異動ではなく注記
+      let rest = tok;
+      const hit = [];
+      names.forEach((n) => { if (rest.indexOf(n) >= 0) { hit.push(n); rest = rest.split(n).join(''); } });
+      if (hit.length === 0) { unmatched.push(tok); return; }
+      const label = rest.replace(/^[\s/・、,]+/, '').replace(/^の/, '').replace(/[\s/・、,]+$/, '').trim();
+      hit.forEach((n) => byType[n].notes.push((label || '一部') + 'のみクラス' + cls.key));
+    });
+  });
+  const def = rule.classes.find((c) => c.isDefault);
+  if (def) types.forEach((t) => { if (t.classSource !== 'ledger') assign(t, def); });
+
+  return {
+    title: parseGameDocTitle(src),
+    categories, types, malformed,
+    classRule: { line: rule.line, classes: rule.classes, unmatchedTokens: unmatched },
+    lifecycle: parseGameLifecycle(src),
+  };
+}
+
+// game-prototype/data/*.json の走査（純関数・ディレクトリ未作成でも空配列）。
+//   壊れたJSON・meta欠落はエラー付きの行として返す（クラッシュさせない＝§0-7）。
+//   items を持たない設定形（calendar_config 等）は件数 null で許容。
+
+// 便23（モバイル移植）: 行の sha256 は SubtleCrypto が非同期のため、モバイルの作法どおり
+//   program.js が計算し、その結果を引く関数 hashOf として渡す（この関数は純関数のまま）。
+//   Mac板は sha256Hex を直に呼ぶ。渡さなければ srcHash は null（1回目の走査＝原文の収集用）。
+export function parseGameDefinitionDoc(text, hashOf) {
+  if (typeof hashOf !== 'function') hashOf = () => null;
+  const src = String(text == null ? '' : text);
+  const lines = src.split('\n');
+
+  // 状態行 → 段（①〜⑥）。「状態」を書いた行を優先し、無ければライフサイクル記載の行を見る。
+  const markRe = new RegExp('ライフサイクル\\s*([' + GAME_LIFECYCLE_MARKS.join('') + '])');
+  const pickStatus = (pred) => {
+    for (const raw of lines) {
+      if (!pred(raw)) continue;
+      const m = markRe.exec(raw);
+      if (!m) continue;
+      return {
+        lifecycle: GAME_LIFECYCLE_MARKS.indexOf(m[1]) + 1,
+        statusLine: raw.replace(/^\s*>\s*/, '').replace(/\*\*/g, '').trim(),
+      };
+    }
+    return null;
+  };
+  const status = pickStatus((l) => /状態/.test(l) && /ライフサイクル/.test(l))
+    || pickStatus((l) => /ライフサイクル/.test(l))
+    || { lifecycle: null, statusLine: '' };
+
+  // 表 → 直前の見出しで節を付ける（改訂履歴の表は候補ではない）。
+  const headings = [];
+  lines.forEach((l, i) => {
+    const m = /^(#{1,6})\s+(.*)$/.exec(l);
+    if (m) headings.push({ line: i, level: m[1].length, text: m[2].trim(), raw: l.trim() });
+  });
+  const sectionAt = (ln) => {
+    let cur = null;
+    for (const h of headings) { if (h.line >= ln) break; cur = h; }
+    return cur;
+  };
+  // 行id＝先頭セルの識別子（`id案`）。取れない・重なる場合も必ず一意の名前を作る（取りこぼさない）。
+  const usedIds = Object.create(null);
+  const makeRowId = (cells, ti, ri) => {
+    let base = gameCellToken(cells && cells[0]).replace(/\s+/g, ' ').trim();
+    if (base === '' || base === '—' || base === '-') base = '表' + (ti + 1) + '行' + (ri + 1);
+    let id = base;
+    let n = 2;
+    while (usedIds[id]) { id = base + '#' + n; n += 1; }
+    usedIds[id] = true;
+    return id;
+  };
+  const tables = parseMarkdownTables(src).map((t, ti) => {
+    const h = sectionAt(t.startLine);
+    const section = h ? h.text : '';
+    const kind = /改訂履歴|変更履歴|更新履歴/.test(section) ? 'history' : 'candidate';
+    // 行の原文（md1行）とそのsha256＝便14の項目ごとハッシュと同方式。原文が変われば確認は失効する。
+    const rowMeta = t.rows.map((cells, ri) => {
+      const line = t.startLine + 2 + ri;
+      const raw = lines[line] == null ? '' : lines[line];
+      return { id: kind === 'candidate' ? makeRowId(cells, ti, ri) : '', line, raw, srcHash: hashOf(raw) };
+    });
+    return {
+      section,
+      sectionLine: h ? h.line : -1,
+      sectionAnchor: h ? h.raw : '',
+      kind,
+      headers: t.header,
+      rows: t.rows,
+      rowMeta,
+      startLine: t.startLine,
+      endLine: t.endLine,
+    };
+  });
+  const candidates = tables.filter((t) => t.kind === 'candidate');
+  const candidateRows = candidates.reduce((n, t) => n + t.rows.length, 0);
+  const warnRows = candidates.reduce(
+    (n, t) => n + t.rows.filter((r) => r.some((c) => String(c).indexOf('⚠') >= 0)).length, 0);
+
+  // 💬スロット（直後に本文があれば記入済み。見出し・表・次の💬までを見る）
+  // 便18: 件数だけでなく本文・↳応答も取り出す（詳細画面のスレッド表示・書き戻しの足場）。
+  const comments = [];
+  let commentSlots = 0, commentSlotsFilled = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const t = lines[i].trim();
+    if (t.indexOf('💬') !== 0) continue;
+    commentSlots += 1;
+    const inline = t.slice('💬'.length).replace(/^[:：]\s*/, '').trim();
+    let filled = inline !== '';
+    const replies = [];
+    for (let j = i + 1; j < lines.length; j++) {
+      const s = lines[j].trim();
+      if (s === '') continue;
+      if (/^#{1,6}\s/.test(s) || s.startsWith('|') || s.indexOf('💬') === 0) break;
+      filled = true;
+      replies.push({
+        line: j,
+        raw: lines[j],
+        kind: s.indexOf('↳') === 0 ? 'reply' : 'note',
+        text: s.replace(/^↳\s*/, '').trim(),
+      });
+    }
+    const h = sectionAt(i);
+    comments.push({
+      line: i,
+      section: h ? h.text : '',
+      sectionLine: h ? h.line : -1,
+      sectionAnchor: h ? h.raw : '',
+      text: inline,
+      filled,
+      replies,
+    });
+    if (filled) commentSlotsFilled += 1;
+  }
+
+  return {
+    title: parseGameDocTitle(src),
+    statusLine: status.statusLine,
+    lifecycle: status.lifecycle,
+    sections: headings,
+    tables,
+    comments,
+    candidateRows,
+    warnRows,
+    commentSlots,
+    commentSlotsFilled,
+  };
+}
+
+// 💬スロットへの書き戻し（純関数・便18 §5n）。原文は他の一切を変えない（最小差分）。
+//   input: { section（節見出しの文言）, anchor（節見出しの原文・照合用・任意）, rowId（任意）, comment }
+//   様式: 空スロット行`💬` → `💬 本文` に置換／記入済みなら そのスレッドの直下へ `💬 本文` を追行。
+//   行を指定した場合は本文の先頭に （`id案`） を付ける。
+//   照合できない（節が無い・アンカー不一致・指定行が無い・💬欄が無い）ときは書かずにエラーを返す。
+export function applyGameDocComment(text, input) {
+  const src = String(text == null ? '' : text);
+  const comment = String((input && input.comment) || '').replace(/[\r\n]+/g, ' ').trim();
+  if (comment === '') return { error: 'ご意見の本文が空です', code: 400 };
+  const section = String((input && input.section) || '').trim();
+  if (section === '') return { error: 'どの節への記入かが指定されていません', code: 400 };
+  const anchor = input && input.anchor != null ? String(input.anchor).trim() : '';
+  const rowId = String((input && input.rowId) || '').trim();
+
+  const parsed = parseGameDefinitionDoc(src);
+  const heads = parsed.sections || [];
+  const idx = heads.findIndex((h) => h.text === section);
+  if (idx < 0) return { error: '定義文書にその節が見つかりません: ' + section, code: 409 };
+  const head = heads[idx];
+  if (anchor !== '' && anchor !== head.raw) {
+    return { error: '定義文書のその節の見出しが変わっています（書き込みは行いません）。画面を読み直してください。', code: 409 };
+  }
+  // 節の範囲＝次の同じか浅い見出しの手前まで
+  let endLine = src.split('\n').length;
+  for (let i = idx + 1; i < heads.length; i++) {
+    if (heads[i].level <= head.level) { endLine = heads[i].line; break; }
+  }
+  if (rowId !== '') {
+    const found = (parsed.tables || []).some((t) => t.kind === 'candidate'
+      && t.sectionLine === head.line
+      && (t.rowMeta || []).some((r) => r.id === rowId));
+    if (!found) return { error: 'その節にその行が見つかりません: ' + rowId + '（書き込みは行いません）', code: 409 };
+  }
+
+  const slots = (parsed.comments || []).filter((c) => c.line > head.line && c.line < endLine);
+  if (!slots.length) return { error: 'この節には💬の記入欄がありません（文書へ直接どうぞ）', code: 409 };
+
+  const lines = src.split('\n');
+  const body = (rowId !== '' ? '（`' + rowId + '`）' : '') + comment;
+  const empty = slots.find((c) => !c.filled);
+  if (empty) {
+    const indent = (/^\s*/.exec(lines[empty.line]) || [''])[0];
+    lines[empty.line] = indent + '💬 ' + body;
+    return { text: lines.join('\n'), mode: 'fill', line: empty.line, body };
+  }
+  const last = slots[slots.length - 1];
+  const at = last.replies.length ? last.replies[last.replies.length - 1].line : last.line;
+  const indent = (/^\s*/.exec(lines[last.line]) || [''])[0];
+  lines.splice(at + 1, 0, indent + '💬 ' + body);
+  return { text: lines.join('\n'), mode: 'append', line: at + 1, body };
+}
+
+// Projects/GameMode/Data/*.md の走査（純関数・読み取りのみ／ディレクトリ未作成でも空配列）。
+//   ファイル名＝種の正式名。読めない・様式外の文書はエラー付きの行として返す（§0-7）。
+
+export function gameRowCheckState(rowMeta, checksForType) {
+  const rec = (checksForType && typeof checksForType === 'object') ? checksForType[rowMeta && rowMeta.id] : null;
+  if (!rec || !rec.srcHash) return { checked: false, stale: false, checkedAt: '' };
+  const same = rec.srcHash === (rowMeta && rowMeta.srcHash);
+  return { checked: same, stale: !same, checkedAt: String(rec.checkedAt || '') };
+}
+
+// 1種ぶんの確認済み集計（純関数）。候補表の行のみを数える。
+export function gameCheckCounts(doc, checksForType) {
+  const out = { rows: 0, checked: 0, stale: 0 };
+  (doc && doc.tables ? doc.tables : []).forEach((t) => {
+    if (t.kind !== 'candidate') return;
+    (t.rowMeta || []).forEach((r) => {
+      out.rows += 1;
+      const st = gameRowCheckState(r, checksForType);
+      if (st.checked) out.checked += 1;
+      if (st.stale) out.stale += 1;
+    });
+  });
+  return out;
+}
+
+// 台帳・ファイル・定義文書の重ね合わせ（純関数）。
+//   優先順（便17 §5m）: JSONファイルのmeta ＞ 定義文書 ＞ 台帳。クラスは定義文書が持たないので JSON＞台帳。
+//   ledger = parseGameMasterData の結果（null 可）／files = readGameDataFiles ／docs = readGameDefinitionDocs。
+export function mergeGameData(ledger, files, docs, checks) {
+  const checkStore = (checks && typeof checks === 'object') ? checks : {};
+  const lg = ledger && typeof ledger === 'object' ? ledger : {};
+  const ledgerTypes = Array.isArray(lg.types) ? lg.types : [];
+  const fileRows = Array.isArray(files) ? files : [];
+  const fileByType = Object.create(null);
+  fileRows.forEach((f) => { if (!fileByType[f.type]) fileByType[f.type] = f; });
+  const docRows = Array.isArray(docs) ? docs : [];
+  const docByType = Object.create(null);
+  docRows.forEach((d) => { if (!docByType[d.type]) docByType[d.type] = d; });
+
+  const order = ledgerTypes.map((t) => t.type);
+  fileRows.forEach((f) => { if (order.indexOf(f.type) < 0) order.push(f.type); });
+  docRows.forEach((d) => { if (order.indexOf(d.type) < 0) order.push(d.type); });
+  const ledgerByType = Object.create(null);
+  ledgerTypes.forEach((t) => { ledgerByType[t.type] = t; });
+
+  const types = order.map((name) => {
+    const l = ledgerByType[name] || null;
+    const f = fileByType[name] || null;
+    const d = docByType[name] || null;
+    const meta = (f && f.meta) || null;
+    const warnings = [];
+
+    // 管理クラス（ファイル優先・無ければ台帳導出）
+    let managementClass = l ? l.managementClass : '';
+    let classLabel = l ? l.classLabel : '';
+    let classSource = l && l.managementClass ? 'ledger' : 'none';
+    if (meta && typeof meta.managementClass === 'string' && meta.managementClass.trim() !== '') {
+      managementClass = meta.managementClass.trim();
+      classSource = 'file';
+      if (!l || l.managementClass !== managementClass) classLabel = '';
+    }
+
+    // ライフサイクル（JSONファイル ＞ 定義文書 ＞ 台帳＝①。便17 §5m）
+    let lifecycle = 1;
+    let lifecycleSource = 'ledger';
+    if (d && Number.isInteger(d.lifecycle) && d.lifecycle >= 1 && d.lifecycle <= 6) {
+      lifecycle = d.lifecycle;
+      lifecycleSource = 'doc';
+    }
+    if (meta && Number.isInteger(meta.lifecycle)) {
+      if (meta.lifecycle >= 1 && meta.lifecycle <= 6) { lifecycle = meta.lifecycle; lifecycleSource = 'file'; }
+      else warnings.push('ライフサイクルの段が①〜⑥の外です（' + meta.lifecycle + '）');
+    }
+
+    // ボード表示（false でも行は消さない＝全種表示。理由が無ければ警告）
+    const boardVisible = !(meta && meta.boardVisible === false);
+    const boardExclusionReason = (meta && typeof meta.boardExclusionReason === 'string') ? meta.boardExclusionReason.trim() : '';
+    if (!boardVisible && boardExclusionReason === '') warnings.push('ボードに出さない理由が書かれていません');
+    if (!l) warnings.push('台帳に載っていない種です');
+    if (f && f.error) warnings.push(f.error);
+    if (d && d.error) warnings.push(d.error);
+    if (d && d.lifecycle == null && !d.error) warnings.push('定義文書に進み具合（ライフサイクル）の記載が見つかりません');
+    if (f && meta && typeof meta.type === 'string' && meta.type.trim() !== '' && meta.type.trim() !== f.file.replace(/\.json$/i, '')) {
+      warnings.push('ファイル名と種の名前が一致しません（ファイル: ' + f.file + '）');
+    }
+
+    // 実装投入の区別（便18 §5n）: データファイルが実在＝最終承認後の機械生成済み＝実装投入済み。
+    const implState = f ? 'implemented' : (d ? 'candidate' : 'none');
+    const implLabel = implState === 'implemented' ? '実装投入済み' : (implState === 'candidate' ? '検討中の候補' : '');
+
+    return {
+      type: name,
+      nameJa: l ? l.nameJa : '',
+      category: l ? l.category : '',
+      categoryLabel: l ? l.categoryLabel : '',
+      defines: l ? l.defines : '',
+      mainFields: l ? l.mainFields : '',
+      relations: l ? l.relations : '',
+      notes: l ? l.notes.slice() : [],
+      inLedger: !!l,
+      managementClass, classLabel, classSource,
+      lifecycle, lifecycleSource,
+      boardVisible, boardExclusionReason,
+      fileExists: !!f,
+      file: f ? f.file : '',
+      itemCount: f ? f.itemCount : null,
+      schemaVersion: (meta && meta.schemaVersion != null) ? meta.schemaVersion : null,
+      error: f ? f.error : '',
+      // 定義文書（中身の正・共同編集中。表そのものは詳細で返す）
+      docExists: !!d,
+      docFile: d ? d.file : '',
+      docTitle: d ? d.title : null,
+      docStatusLine: d ? d.statusLine : '',
+      docLifecycle: d ? d.lifecycle : null,
+      candidateRows: d ? d.candidateRows : null,
+      docWarnRows: d ? d.warnRows : null,
+      docCommentSlots: d ? d.commentSlots : null,
+      docCommentSlotsFilled: d ? d.commentSlotsFilled : null,
+      docError: d ? d.error : '',
+      // 便18（§5n）: 実装へ投入済みか、まだ検討中の候補か（2値で明示）。
+      implState, implLabel,
+      // 便18（§5n）: 行ごとの確認チェックの集計（定義文書のある種のみ）。
+      checkCounts: d ? gameCheckCounts(d, checkStore[name]) : null,
+      warnings,
+    };
+  });
+
+  const counts = {
+    total: types.length,
+    withFile: types.filter((t) => t.fileExists).length,
+    withDoc: types.filter((t) => t.docExists).length,
+    candidateRows: types.reduce((n, t) => n + (t.candidateRows || 0), 0),
+    implemented: types.filter((t) => t.implState === 'implemented').length,
+    candidates: types.filter((t) => t.implState === 'candidate').length,
+    checkedRows: types.reduce((n, t) => n + (t.checkCounts ? t.checkCounts.checked : 0), 0),
+    staleCheckedRows: types.reduce((n, t) => n + (t.checkCounts ? t.checkCounts.stale : 0), 0),
+    unregistered: types.filter((t) => !t.inLedger).length,
+    hidden: types.filter((t) => !t.boardVisible).length,
+    withWarning: types.filter((t) => t.warnings.length > 0).length,
+    items: types.reduce((n, t) => n + (t.itemCount || 0), 0),
+    byClass: {},
+    byLifecycle: {},
+    byCategory: {},
+  };
+  types.forEach((t) => {
+    const c = t.managementClass || '—';
+    counts.byClass[c] = (counts.byClass[c] || 0) + 1;
+    counts.byLifecycle[t.lifecycle] = (counts.byLifecycle[t.lifecycle] || 0) + 1;
+    const g = t.category || '—';
+    counts.byCategory[g] = (counts.byCategory[g] || 0) + 1;
+  });
+  return { types, counts };
+}
+
+// 一覧ペイロード（読み取りのみ・台帳/データ未整備でも無事故）。中身（items）は詳細で返す。
+
+// ---- 便23: ファイル1本ぶんの組み立て（Mac板の read* からIOを外した形・純関数） ----
+
+// データファイル1本（Mac readGameDataFiles の1件ぶんと同じ形）。raw が null＝読めなかった。
+export function buildGameDataFileRow(name, raw) {
+  const row = { file: name, type: String(name).replace(/\.json$/i, ''), meta: null, items: null, itemCount: null, error: '' };
+  if (raw == null) { row.error = 'ファイルを読めません'; return row; }
+  let json;
+  try { json = JSON.parse(raw); }
+  catch (e) { row.error = 'JSONとして読めません（' + String(e && e.message ? e.message : e) + '）'; return row; }
+  if (!json || typeof json !== 'object' || Array.isArray(json)) { row.error = '中身が種の形（meta と items）になっていません'; return row; }
+  if (json.meta && typeof json.meta === 'object' && !Array.isArray(json.meta)) {
+    row.meta = json.meta;
+    if (typeof json.meta.type === 'string' && json.meta.type.trim() !== '') row.type = json.meta.type.trim();
+  } else {
+    row.error = '種の属性（meta）が書かれていません';
+  }
+  if (Array.isArray(json.items)) { row.items = json.items; row.itemCount = json.items.length; }
+  else if (json.items != null) row.error = (row.error ? row.error + '／' : '') + '中身（items）が並びの形ではありません';
+  return row;
+}
+
+// 定義文書1本（Mac readGameDefinitionDocs の1件ぶんと同じ形）。
+export function buildGameDefinitionDocRow(name, raw, hashOf) {
+  const row = {
+    file: name, type: String(name).replace(/\.md$/i, ''), title: null, statusLine: '', lifecycle: null,
+    sections: [], tables: [], comments: [],
+    candidateRows: 0, warnRows: 0, commentSlots: 0, commentSlotsFilled: 0, error: '',
+  };
+  if (raw == null) { row.error = '定義文書を読めません'; return row; }
+  try { Object.assign(row, parseGameDefinitionDoc(raw, hashOf)); }
+  catch (e) { row.error = '定義文書の中身を読み取れません（' + String(e && e.message ? e.message : e) + '）'; }
+  return row;
+}
+
+// 一覧ペイロード（Mac gameDataPayload と同形）。IOは呼ぶ側（program.js）が済ませて渡す。
+export function buildGameDataPayload({ ledgerText, schemaText, files, docs, checks, sources }) {
+  const src = sources || {};
+  const ledgerAvailable = ledgerText != null;
+  const parsed = parseGameMasterData(ledgerText || '');
+  const merged = mergeGameData(parsed, files || [], docs || [], checks || {});
+  const schemaAvailable = schemaText != null;
+  return {
+    available: ledgerAvailable,
+    ledger: {
+      available: ledgerAvailable,
+      source: src.ledger || '',
+      title: parsed.title,
+      categories: parsed.categories,
+      classes: parsed.classRule.classes.map((c) => ({ key: c.key, label: c.label, isDefault: c.isDefault })),
+      unmatchedTokens: parsed.classRule.unmatchedTokens,
+      malformed: parsed.malformed,
+    },
+    schema: {
+      available: schemaAvailable,
+      source: src.schema || '',
+      title: schemaAvailable ? parseGameDocTitle(schemaText) : null,
+    },
+    dataDir: { source: src.dataDir || '', exists: !!src.dataDirExists, fileCount: (files || []).length },
+    defDir: { source: src.defDir || '', exists: !!src.defDirExists, fileCount: (docs || []).length },
+    checks: { source: src.checks || '' },
+    lifecycle: parsed.lifecycle,
+    types: merged.types,
+    counts: merged.counts,
+  };
+}
+
+// 詳細ペイロード（Mac gameDataDetail と同形）。type は一覧照合で検証（知らない種は返さない）。
+export function buildGameDataDetail({ payload, type, docs, files, checks }) {
+  const name = String(type == null ? '' : type).trim();
+  const row = (payload.types || []).find((t) => t.type === name);
+  if (!row) return { error: '知らないデータ種です: ' + name, code: 404 };
+  const detail = {
+    ...row,
+    lifecycleStages: payload.lifecycle,
+    schema: payload.schema,
+    doc: null,
+    meta: null,
+    items: null,
+    itemsHidden: false,
+  };
+  if (row.docExists) {
+    const d = (docs || []).find((x) => x.type === name) || null;
+    if (d) {
+      const forType = (checks || {})[name] || null;
+      detail.doc = {
+        file: d.file,
+        source: payload.defDir.source + '/' + d.file,
+        title: d.title,
+        statusLine: d.statusLine,
+        lifecycle: d.lifecycle,
+        tables: (d.tables || []).map((t) => ({
+          ...t,
+          rowMeta: (t.rowMeta || []).map((r) => ({ ...r, ...gameRowCheckState(r, forType) })),
+        })),
+        comments: d.comments || [],
+        checkCounts: gameCheckCounts(d, forType),
+        candidateRows: d.candidateRows,
+        warnRows: d.warnRows,
+        commentSlots: d.commentSlots,
+        commentSlotsFilled: d.commentSlotsFilled,
+        error: d.error,
+      };
+    }
+  }
+  if (!row.fileExists) return detail;
+  const f = (files || []).find((x) => x.type === name) || null;
+  detail.meta = f ? f.meta : null;
+  if (!row.boardVisible) {
+    detail.itemsHidden = true;
+    detail.hiddenReason = row.boardExclusionReason || '（理由が書かれていません）';
+    return detail;
+  }
+  detail.items = f ? f.items : null;
+  return detail;
+}

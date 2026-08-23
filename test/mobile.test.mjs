@@ -5,7 +5,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
@@ -434,10 +434,10 @@ test('⑪ 混在桁 ID は数値順に採番・ソートされる', () => {
 // ---------------------------------------------------------------------------
 // ⑫ タブ順（v1.4）＋ Report タブ抽出（type=report・cardsForType 再利用）
 // ---------------------------------------------------------------------------
-test('⑫ 最上位ナビ7群（便9でProjects・便22で制作を末尾に追加）＋Cards群の第2階層タブ順', () => {
-  // 最上位ナビ = Cards / Sheets / 進捗 / Views / Sessions / Projects / 制作（この順）
-  assert.deepStrictEqual(enabledGroups().map((g) => g.id), ['cards', 'sheets', 'progress', 'views', 'sessions', 'projects', 'production'], '群の順');
-  assert.deepStrictEqual(enabledGroups().map((g) => g.label), ['Cards', 'Sheets', '進捗', 'Views', 'Sessions', 'Projects', '制作'], '群のラベル');
+test('⑫ 最上位ナビ8群（便9=Projects・便22=制作・便23=データを末尾に追加）＋Cards群の第2階層タブ順', () => {
+  // 最上位ナビ = Cards / Sheets / 進捗 / Views / Sessions / Projects / 制作 / データ（この順）
+  assert.deepStrictEqual(enabledGroups().map((g) => g.id), ['cards', 'sheets', 'progress', 'views', 'sessions', 'projects', 'production', 'gamedata'], '群の順');
+  assert.deepStrictEqual(enabledGroups().map((g) => g.label), ['Cards', 'Sheets', '進捗', 'Views', 'Sessions', 'Projects', '制作', 'データ'], '群のラベル');
   // Cards 群の第2階層タブ順（v1.8 の8タブを内包）
   assert.deepStrictEqual(
     enabledViewIdsForGroup('cards'),
@@ -451,13 +451,15 @@ test('⑫ 最上位ナビ7群（便9でProjects・便22で制作を末尾に追�
   assert.deepStrictEqual(enabledViewIdsForGroup('sessions'), ['sessions']);
   assert.deepStrictEqual(enabledViewIdsForGroup('projects'), ['projects'], 'Projects群の単一ビュー（便9）');
   assert.deepStrictEqual(enabledViewIdsForGroup('production'), ['production'], '制作群の単一ビュー（便22・タイル/俯瞰はビュー内の切替）');
+  assert.deepStrictEqual(enabledViewIdsForGroup('gamedata'), ['gamedata'], 'データ群の単一ビュー（便23）');
   assert.strictEqual(viewGroup('board'), 'cards');
   assert.strictEqual(viewGroup('sheets'), 'sheets');
   assert.strictEqual(viewGroup('progressboard'), 'progress');
   assert.strictEqual(viewGroup('projects'), 'projects');
   assert.strictEqual(viewGroup('production'), 'production');
+  assert.strictEqual(viewGroup('gamedata'), 'gamedata');
   // enabledViewIds は全群のビューを config 順で返す（動的 import 用）
-  assert.deepStrictEqual(enabledViewIds(), ['board', 'reference', 'knowledge', 'consult', 'decision', 'report', 'tray', 'memo', 'completed', 'sheets', 'progressboard', 'views', 'sessions', 'projects', 'production']);
+  assert.deepStrictEqual(enabledViewIds(), ['board', 'reference', 'knowledge', 'consult', 'decision', 'report', 'tray', 'memo', 'completed', 'sheets', 'progressboard', 'views', 'sessions', 'projects', 'production', 'gamedata']);
 });
 
 test('⑫b cardsForType(type=report) は report カードのみ抽出（Report タブ）', () => {
@@ -2584,7 +2586,7 @@ test('㋒(便7) build number in index.html matches sw.js CACHE version', () => {
   assert.ok(bm, 'index.html に build 番号');
   assert.ok(cm, 'sw.js に pbm-shell-v 版数');
   assert.strictEqual(bm[1], cm[1], 'build 表記(' + bm[1] + ') と sw CACHE 版数(' + cm[1] + ') が一致');
-  assert.strictEqual(bm[1], '48', '本便=build 48（便22・制作カテゴリの移植。sw CACHE v48 と同期）');
+  assert.strictEqual(bm[1], '49', '本便=build 49（便23・データタブの移植＝§0-9 2板同内容の原則。sw CACHE v49 と同期）');
   // 便13: Sheet核キャッシュの版数も build と同期（導出が変われば build が上がる＝旧い核を自動で捨てる）。
   const pm = /SHEET_CACHE_VERSION\s*=\s*(\d+)/.exec(readDoc('program.js'));
   assert.ok(pm, 'program.js に SHEET_CACHE_VERSION');
@@ -3175,10 +3177,179 @@ test('㋞c(便22) program.loadProduction: 未整備・壊れた入力でも壊�
 test('㋞d(便22) 制作ビューが殻（sw.js）に載り、群ナビ・ビュー登録と揃っている', () => {
   const sw = readDoc('sw.js');
   assert.ok(sw.includes("'./views/production.js'"), 'sw.js の SHELL に制作ビュー（オフラインでも殻が揃う）');
-  assert.ok(/pbm-shell-v48/.test(sw), 'sw CACHE 版数＝48');
+  // 版数のピンは ㋒（4点セット同期）が持つ＝ここでは持たない（便ごとに二重の版数ピンを作らない）
   const view = readDoc('views/production.js');
   assert.ok(/registerView\(\{[\s\S]*id: 'production'/.test(view), 'ビューが自己登録する（既存コードを編集しない設計）');
   assert.ok(!/addSheetComment|approveSheet|upload|files\/upload/.test(view), 'v1は読み取り専用＝書き込みの口を持たない');
   // 画面に出す記号は必ず凡例で宣言する（凡例に無い記号を出さない）
   assert.ok(view.includes('●') && view.includes('−') && view.includes('○'), '3記号を凡例で宣言');
+});
+
+// ---------------------------------------------------------------------------
+// ㋟(便23) データタブ — Mac板 便16〜18 の移植（§0-9 2板同内容の原則の適用第1弾）。
+//   狙い＝①導出がMac板と全項目一致すること（二重の正の検出器）②Dropbox越しの読み取り
+//         ③書き込み2つがSheetと同水準の安全機構＋📱印で動くこと ④殻・群ナビの配線。
+// ---------------------------------------------------------------------------
+
+test('㋟(便23) データの導出＝Mac板 server.js と完全一致（実データ・二重の正なし）', async (t) => {
+  const macServer = resolve(HERE, '..', '..', 'program-board', 'server.js');
+  const A = resolve(HERE, '..', '..', '..');
+  if (!existsSync(macServer)) { t.skip('Mac板が無い環境'); return; }
+  const require = createRequire(import.meta.url);
+  const S = require(macServer);
+  const { createHash } = require('node:crypto');
+  const sha = (x) => createHash('sha256').update(String(x == null ? '' : x), 'utf8').digest('hex');
+  const mac = S.gameDataPayload();
+  if (!mac.available) { t.skip('実データ（台帳）が無い環境'); return; }
+
+  // モバイル側＝IOをテストが済ませ、純関数へ渡す（program.js と同じ組み立て）
+  const readIf = (p) => (existsSync(p) ? readFileSync(p, 'utf8') : null);
+  const listNames = (dir, re) => (existsSync(dir)
+    ? readdirSync(dir).filter((n) => re.test(n) && !n.startsWith('.')).sort() : []);
+  const cfg = APP_CONFIG.gameData;
+  const dataDir = resolve(A, cfg.dataDirSub);
+  const defDir = resolve(A, cfg.defDirSub);
+  const files = listNames(dataDir, /\.json$/i).map((n) => P.buildGameDataFileRow(n, readIf(resolve(dataDir, n))));
+  const docs = listNames(defDir, /\.md$/i).map((n) => P.buildGameDefinitionDocRow(n, readIf(resolve(defDir, n)), sha));
+  let checks = {};
+  const checksPath = resolve(A, 'Program', cfg.checksSub);
+  if (existsSync(checksPath)) { try { checks = JSON.parse(readFileSync(checksPath, 'utf8')) || {}; } catch { checks = {}; } }
+
+  const mob = P.buildGameDataPayload({
+    ledgerText: readIf(resolve(A, cfg.ledgerSub)),
+    schemaText: readIf(resolve(A, cfg.schemaSub)),
+    files, docs, checks,
+    sources: {
+      ledger: mac.ledger.source, schema: mac.schema.source,
+      dataDir: mac.dataDir.source, dataDirExists: mac.dataDir.exists,
+      defDir: mac.defDir.source, defDirExists: mac.defDir.exists,
+      checks: mac.checks.source,
+    },
+  });
+
+  assert.strictEqual(mob.available, true);
+  assert.deepStrictEqual(mob.counts, mac.counts, '件数（種の総数・ファイルあり等）が一致');
+  assert.deepStrictEqual(mob.lifecycle, mac.lifecycle, '進み具合の段が一致');
+  assert.deepStrictEqual(mob.ledger, mac.ledger, '台帳の解析結果が一致（種・分類・クラス規則・様式外）');
+  assert.deepStrictEqual(mob.schema, mac.schema, '様式文書の扱いが一致');
+  assert.deepStrictEqual(mob.types, mac.types, '種ごとの行が全項目一致');
+  assert.ok(mac.types.length > 0, '実データに種がある（採れなくなったら検出）');
+
+  // 詳細も種ごとに全数突き合わせる（定義文書の表・行ハッシュ・確認状態・💬まで）
+  for (const t2 of mac.types) {
+    const macDetail = S.gameDataDetail(t2.type);
+    const mobDetail = P.buildGameDataDetail({ payload: mob, type: t2.type, docs, files, checks });
+    assert.deepStrictEqual(mobDetail, macDetail, '詳細が一致: ' + t2.type);
+  }
+});
+
+test('㋟b(便23) program.loadGameData/Detail: Dropbox越しに台帳・定義文書・データファイルを読む', async () => {
+  const A = '/ArchPlan';
+  const LEDGER = [
+    '# GAME_MASTER_DATA — マスタデータ台帳 v0.9',
+    '', '## A. 住人系（Character）', '',
+    '| 正式名 | 日本語名 | 何を定義するか | 主な項目 | 主な関係 |',
+    '|---|---|---|---|---|',
+    '| `trait` | 性格特性 | 住人の性格 | id・表示名 | → `parameter` |',
+    '| `dialogue` | セリフ | 場面別の発話 | id・場面 | → stringテーブル |',
+    '', '## §3b 管理方式', '',
+    '- **管理クラス3種**（中身を誰が書くか）: **A=あなた主筆・私が確認**（dialogue）／**C=私主筆・あなたは承認のみ**（残り全種）。',
+    '- **状態ライフサイクル**（進捗の単位）: ①種確定→②項目確定（D2）→③叩き台v1→④共同編集/監修中→⑤PT検証済→⑥確定v1。',
+    '',
+  ].join('\n');
+  const DOC = [
+    '# trait — 性格特性', '', '**状態**: ライフサイクル③叩き台v1', '',
+    '## 候補', '',
+    '| id案 | 表示名 | 備考 |', '|---|---|---|',
+    '| morning_person | 朝型 | |', '| night_owl | 夜型 | ⚠️重複疑い |',
+    '', '💬', '',
+  ].join('\n');
+  const { program, store } = mockProgram({
+    [A + '/Projects/GameMode/GAME_MASTER_DATA.md']: LEDGER,
+    [A + '/Projects/GameMode/Data/trait.md']: DOC,
+    [A + '/game-prototype/data/trait.json']: JSON.stringify({ meta: { type: 'trait', boardVisible: true }, items: [{ id: 'morning_person' }] }),
+  }, { gameData: APP_CONFIG.gameData });
+
+  const p = await program.loadGameData();
+  assert.strictEqual(p.available, true, '台帳が読める');
+  assert.strictEqual(p.types.length, 2, '台帳の2種が出る');
+  const trait = p.types.find((x) => x.type === 'trait');
+  assert.strictEqual(trait.fileExists, true, 'データファイルの実在が重なる');
+  assert.strictEqual(trait.docExists, true, '定義文書の実在が重なる');
+
+  const d = await program.loadGameDataDetail('trait');
+  assert.ok(d.doc, '定義文書が詳細に載る');
+  assert.strictEqual(d.doc.candidateRows, 2, '候補2行');
+  assert.strictEqual(d.doc.warnRows, 1, '⚠️の行を数える');
+  const rows = d.doc.tables.find((t) => t.kind === 'candidate').rowMeta;
+  assert.deepStrictEqual(rows.map((r) => r.id), ['morning_person', 'night_owl'], '行idは先頭セルから');
+  assert.ok(rows.every((r) => typeof r.srcHash === 'string' && r.srcHash.length === 64), '行の原文のsha256が付く（SubtleCrypto経由）');
+  assert.ok(rows.every((r) => r.checked === false), '初期は未確認');
+  assert.deepStrictEqual(await program.loadGameDataDetail('nosuch'), { error: '知らないデータ種です: nosuch', code: 404 }, '知らない種は返さない');
+  assert.ok(!store.has('/ArchPlan/Program/GameData/DATA_ROW_CHECKS.json'), '読むだけでは記録を作らない');
+});
+
+test('㋟c(便23) 💬の書き戻し: 📱印つき・💬行以外は不変・照合できなければ書かない', async () => {
+  const A = '/ArchPlan';
+  const LEDGER = ['# 台帳', '', '## A', '', '| 正式名 | 日本語名 |', '|---|---|', '| `trait` | 性格特性 |', ''].join('\n');
+  const DOC = ['# trait', '', '## 候補', '', '| id案 | 表示名 |', '|---|---|', '| a | あ |', '', '💬', ''].join('\n');
+  const path = A + '/Projects/GameMode/Data/trait.md';
+  const { program, store } = mockProgram({
+    [A + '/Projects/GameMode/GAME_MASTER_DATA.md']: LEDGER,
+    [path]: DOC,
+  }, { gameData: APP_CONFIG.gameData });
+
+  const before = store.get(path).content;
+  const r = await program.addGameDocComment('trait', { section: '候補', comment: 'ここを確認してください' });
+  assert.strictEqual(r.ok, true);
+  const after = store.get(path).content;
+  assert.ok(after.includes('💬 📱 ここを確認してください'), 'モバイル発は 📱 印がつく（誰がどこから書いたか追える）');
+  assert.strictEqual(after.split('\n').length, before.split('\n').length, '空スロットの置換＝行数は増えない（最小差分）');
+  assert.strictEqual(
+    after.replace(/^💬.*$/m, '💬'), before,
+    '💬行以外は1文字も変わらない',
+  );
+  await assert.rejects(() => program.addGameDocComment('trait', { section: '候補', comment: '   ' }), /コメントが空/, '空は書かない');
+  await assert.rejects(() => program.addGameDocComment('nosuch', { section: '候補', comment: 'x' }), /定義文書がありません/, '無い種へは書かない');
+  assert.strictEqual(store.get(path).content, after, '断られた書き込みではファイルが動かない');
+});
+
+test('㋟d(便23) 確認チェック: 記録はボード側のみ・ハッシュは今の原文から・原文が変われば失効', async () => {
+  const A = '/ArchPlan';
+  const LEDGER = ['# 台帳', '', '## A', '', '| 正式名 | 日本語名 |', '|---|---|', '| `trait` | 性格特性 |', ''].join('\n');
+  const docPath = A + '/Projects/GameMode/Data/trait.md';
+  const checksPath = A + '/Program/GameData/DATA_ROW_CHECKS.json';
+  const doc = (label) => ['# trait', '', '## 候補', '', '| id案 | 表示名 |', '|---|---|', '| a | ' + label + ' |', ''].join('\n');
+  const { program, store } = mockProgram({
+    [A + '/Projects/GameMode/GAME_MASTER_DATA.md']: LEDGER,
+    [docPath]: doc('あ'),
+  }, { gameData: APP_CONFIG.gameData });
+
+  const on = await program.toggleGameRowCheck('trait', 'a');
+  assert.strictEqual(on.checked, true);
+  assert.strictEqual(store.get(docPath).content, doc('あ'), '定義文書は書き換えない（候補表の様式に触れない）');
+  const saved = JSON.parse(store.get(checksPath).content);
+  assert.ok(saved.trait && saved.trait.a && saved.trait.a.srcHash && saved.trait.a.checkedAt, '記録はボード側のJSONのみ');
+  assert.strictEqual(on.detail.doc.tables.find((t) => t.kind === 'candidate').rowMeta[0].checked, true);
+
+  // 原文が変わると確認は失効する（読み直しが要る）
+  store.set(docPath, { content: doc('あさ'), rev: 'r99' });
+  const d2 = await program.loadGameDataDetail('trait');
+  const row = d2.doc.tables.find((t) => t.kind === 'candidate').rowMeta[0];
+  assert.strictEqual(row.checked, false, '原文が変われば確認は無効');
+  assert.strictEqual(row.stale, true, '「原文が新しい」と出す');
+
+  const off = await program.toggleGameRowCheck('trait', 'a', false);
+  assert.strictEqual(off.checked, false);
+  assert.strictEqual(JSON.parse(store.get(checksPath).content).trait, undefined, 'オフは記録を消す（空の種は残さない）');
+  await assert.rejects(() => program.toggleGameRowCheck('trait', 'nosuchrow'), /見つかりません/, '無い行は受け付けない');
+});
+
+test('㋟e(便23) データビューが殻（sw.js）に載り、群ナビ・ビュー登録と揃っている', () => {
+  const sw = readDoc('sw.js');
+  assert.ok(sw.includes("'./views/gamedata.js'"), 'sw.js の SHELL にデータビュー');
+  // 版数のピンは ㋒（4点セット同期）が持つ＝ここでは持たない（便ごとに二重の版数ピンを作らない）
+  const view = readDoc('views/gamedata.js');
+  assert.ok(/registerView\(\{[\s\S]*id: 'gamedata'/.test(view), 'ビューが自己登録する');
+  assert.ok(view.includes('📱'), 'モバイル発の書き込みであることを画面でも明示');
 });

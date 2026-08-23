@@ -707,6 +707,168 @@ export function createProgram(dropbox, config) {
     };
   }
 
+  // 絶対パス（Dropbox上）のテキストを読む。未存在は null（壊れない）。readViewText の絶対パス版。
+  async function readAbsText(dpath) {
+    if (!dpath) return null;
+    try { const { text } = await dropbox.download(dpath); return text; }
+    catch (e) { if (isNotFound(e)) return null; throw e; }
+  }
+
+  // データタブ（便23・Mac板 便16〜18 の移植・§0-9「2板同内容の原則」の適用第1弾）
+  //   正＝台帳 Projects/GameMode/GAME_MASTER_DATA.md ／定義文書 Projects/GameMode/Data/*.md ／
+  //       データファイル game-prototype/data/*.json ／確認の記録 Program/GameData/DATA_ROW_CHECKS.json。
+  //   Mac板と同じ実ファイルを見る（二重の正なし）。導出は parser.js の純関数（Mac server.js と同名）。
+  //   書き込みは2つだけ（💬の書き戻し・行ごとの確認チェック）で、いずれもSheetと同水準の安全機構
+  //   （rev楽観ロック＋最小差分＋照合できなければ書かずにエラー）と 📱 印を使う＝緩い経路を作らない。
+  const gameDataCfg = () => config.gameData || {};
+  const gameLedgerPath = () => join(archplanRoot, gameDataCfg().ledgerSub || '');
+  const gameSchemaPath = () => join(archplanRoot, gameDataCfg().schemaSub || '');
+  const gameDataDirPath = () => join(archplanRoot, gameDataCfg().dataDirSub || '');
+  const gameDefDirPath = () => join(archplanRoot, gameDataCfg().defDirSub || '');
+  const gameChecksPath = () => join(root, gameDataCfg().checksSub || '');
+
+  // フォルダ内の対象ファイル名を並べる（未存在なら空＝壊れない）。名前順はMac板（readdir→sort）と同じ。
+  async function gameListFiles(dir, re) {
+    let entries = [];
+    try { entries = await dropbox.listFolder(dir, { recursive: false }); }
+    catch (e) { if (!isNotFound(e)) throw e; return { exists: false, names: [] }; }
+    const names = entries
+      .filter((ent) => ent['.tag'] === 'file')
+      .map((ent) => basename(ent.path_display))
+      .filter((n) => re.test(n) && !n.startsWith('.'))
+      .sort();
+    return { exists: true, names };
+  }
+
+  async function gameReadDataFiles() {
+    const dir = gameDataDirPath();
+    const { exists, names } = await gameListFiles(dir, /\.json$/i);
+    const raws = await Promise.all(names.map((n) => readAbsText(join(dir, n))));
+    return { exists, rows: names.map((n, i) => P.buildGameDataFileRow(n, raws[i])) };
+  }
+
+  // 定義文書。行のsha256は SubtleCrypto が非同期のため、モバイルの作法どおり
+  //   ①1回目の走査で行の原文を集める→②まとめてハッシュ→③2回目の走査で埋める（純関数のまま）。
+  async function gameReadDefinitionDocs() {
+    const dir = gameDefDirPath();
+    const { exists, names } = await gameListFiles(dir, /\.md$/i);
+    const raws = await Promise.all(names.map((n) => readAbsText(join(dir, n))));
+    const rows = [];
+    for (let i = 0; i < names.length; i += 1) {
+      const raw = raws[i];
+      if (raw == null) { rows.push(P.buildGameDefinitionDocRow(names[i], null)); continue; }
+      const first = P.buildGameDefinitionDocRow(names[i], raw);
+      const seen = new Map();
+      for (const t of (first.tables || [])) for (const r of (t.rowMeta || [])) if (!seen.has(r.raw)) seen.set(r.raw, null);
+      const keys = [...seen.keys()];
+      const hashes = await Promise.all(keys.map((k) => sha256HexSafe(k)));
+      keys.forEach((k, j) => seen.set(k, hashes[j]));
+      rows.push(P.buildGameDefinitionDocRow(names[i], raw, (r) => (seen.has(r) ? seen.get(r) : null)));
+    }
+    return { exists, rows };
+  }
+
+  async function gameReadRowChecks() {
+    const text = await readAbsText(gameChecksPath());
+    if (text == null) return {};
+    try { const j = JSON.parse(text); return (j && typeof j === 'object' && !Array.isArray(j)) ? j : {}; }
+    catch { return {}; }
+  }
+
+  function gameSources(dataDirExists, defDirExists) {
+    const c = gameDataCfg();
+    return {
+      ledger: c.ledgerSub || '', schema: c.schemaSub || '',
+      dataDir: c.dataDirSub || '', dataDirExists,
+      defDir: c.defDirSub || '', defDirExists,
+      checks: 'Program/' + (c.checksSub || ''),
+    };
+  }
+
+  async function loadGameData() {
+    const [ledgerText, schemaText, dataFiles, defDocs, checks] = await Promise.all([
+      readAbsText(gameLedgerPath()),
+      readAbsText(gameSchemaPath()),
+      gameReadDataFiles(),
+      gameReadDefinitionDocs(),
+      gameReadRowChecks(),
+    ]);
+    return P.buildGameDataPayload({
+      ledgerText, schemaText,
+      files: dataFiles.rows, docs: defDocs.rows, checks,
+      sources: gameSources(dataFiles.exists, defDocs.exists),
+    });
+  }
+
+  async function loadGameDataDetail(type) {
+    const [ledgerText, schemaText, dataFiles, defDocs, checks] = await Promise.all([
+      readAbsText(gameLedgerPath()),
+      readAbsText(gameSchemaPath()),
+      gameReadDataFiles(),
+      gameReadDefinitionDocs(),
+      gameReadRowChecks(),
+    ]);
+    const payload = P.buildGameDataPayload({
+      ledgerText, schemaText,
+      files: dataFiles.rows, docs: defDocs.rows, checks,
+      sources: gameSources(dataFiles.exists, defDocs.exists),
+    });
+    return P.buildGameDataDetail({ payload, type, docs: defDocs.rows, files: dataFiles.rows, checks });
+  }
+
+  // 💬ご意見の書き戻し（Mac板 addGameDocComment と同じ規律）。
+  //   書き込み先＝走査結果に実在する定義文書のみ（パス注入不可）。💬行以外は byte 不変。
+  //   照合できないときは書かずにエラー。rev楽観ロックはSheetの💬と同じ機構（updateTextFileWithRetry）。
+  //   モバイル発であることが後から分かるよう、本文の先頭に 📱 を付ける（Sheetの💬と同じ作法）。
+  async function addGameDocComment(type, input) {
+    const name = String(type == null ? '' : type).trim();
+    const { rows } = await gameReadDefinitionDocs();
+    const d = rows.find((x) => x.type === name) || null;
+    if (!d) throw new Error('その種の定義文書がありません: ' + name);
+    const body = String((input && input.comment) || '').replace(/[\r\n]+/g, ' ').trim();
+    if (body === '') throw new Error('コメントが空です');
+    const p = join(gameDefDirPath(), d.file);
+    let applied = null;
+    await dropbox.updateTextFileWithRetry(p, (text) => {
+      applied = P.applyGameDocComment(text, { ...(input || {}), comment: '📱 ' + body });
+      if (applied.error) throw new Error(applied.error);
+      return applied.text;
+    });
+    return { ok: true, mode: applied.mode, line: applied.line, body: applied.body, detail: await loadGameDataDetail(name) };
+  }
+
+  // 行ごとの確認チェックのトグル（Mac板 toggleGameRowCheck と同じ規律）。
+  //   記録＝Program/GameData/DATA_ROW_CHECKS.json のみ（定義文書には書かない）。
+  //   オンのハッシュは常に**今の原文**から取る（クライアントの申告は使わない）。
+  async function toggleGameRowCheck(type, rowId, desired) {
+    const name = String(type == null ? '' : type).trim();
+    const id = String(rowId == null ? '' : rowId).trim();
+    if (id === '') throw new Error('どの行かが指定されていません');
+    const { rows } = await gameReadDefinitionDocs();
+    const d = rows.find((x) => x.type === name) || null;
+    if (!d) throw new Error('その種の定義文書がありません: ' + name);
+    let meta = null;
+    (d.tables || []).forEach((t) => {
+      if (t.kind !== 'candidate') return;
+      (t.rowMeta || []).forEach((r) => { if (r.id === id) meta = r; });
+    });
+    if (!meta) throw new Error('その行が定義文書に見つかりません: ' + id);
+    let checked = false;
+    await dropbox.updateTextFileWithRetry(gameChecksPath(), (current) => {
+      let store = {};
+      try { store = JSON.parse(current) || {}; } catch { store = {}; }
+      if (!store || typeof store !== 'object' || Array.isArray(store)) store = {};
+      const forType = (store[name] && typeof store[name] === 'object') ? store[name] : {};
+      const now = P.gameRowCheckState(meta, forType);
+      checked = (desired == null) ? !now.checked : !!desired;
+      if (checked) forType[id] = { srcHash: meta.srcHash, checkedAt: P.nowStamp() };
+      else delete forType[id];
+      if (Object.keys(forType).length) store[name] = forType; else delete store[name];
+      return JSON.stringify(store, null, 2) + '\n';
+    }, { createIfMissing: true });
+    return { ok: true, type: name, rowId: id, checked, detail: await loadGameDataDetail(name) };
+  }
+
   // 制作タブ（便22・Mac板 便20/21 の移植）: Program/data/production/ の3ファイルを読み取り→機械導出。
   //   正本はMac板と同じ実ファイル（二重の正なし）。読み取り専用＝書き込みAPIは持たない。
   //   3ファイルのどれかが無くても壊れない（available:false＋読めなかったファイルを名指し）。
@@ -882,7 +1044,7 @@ export function createProgram(dropbox, config) {
   const SHEET_CACHE_KEY = 'pbm_cache_sheetcore';
   // 版数は殻の build 番号と揃える（index.html / sw.js と同期・㋒テストが監視）。
   // 導出（parser）が変われば必ず build も上がる＝旧い核は自動で捨てられる。
-  const SHEET_CACHE_VERSION = 48;
+  const SHEET_CACHE_VERSION = 49;
   // 上限。実測（2026-08-03・172件）で 91KB＝平均 478B/件。localStorage 全体 5MB 前後の想定に対し十分な余裕を取る。
   const SHEET_CACHE_MAX_BYTES = config.sheetCacheMaxBytes || 1500000;
   let sheetCoreCache = null;          // Map<dropboxPath, { rev, core }>
@@ -1130,6 +1292,10 @@ export function createProgram(dropbox, config) {
     loadFlowOverview,
     loadProjects,
     loadProduction,
+    loadGameData,
+    loadGameDataDetail,
+    addGameDocComment,
+    toggleGameRowCheck,
     listLibrary,
     readLibraryItem,
     // 便4（§4）: RDSナビ・Library原典
