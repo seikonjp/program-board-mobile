@@ -1024,6 +1024,9 @@ textarea.sheet-comment-input { flex: 1; min-height: 40px; resize: none; }
 .flow-kind { font-size: 10px; color: var(--ink-soft); border: 1px solid var(--line); border-radius: 6px; padding: 0 5px; }
 /* 弾ラベル（stage欄・2026-08-15）。第1弾のみ強調。 */
 .flow-stage-chip { font-size: 10px; color: var(--ink-soft); border: 1px solid var(--line); border-radius: 6px; padding: 0 5px; }
+/* 短い機能名チップ（どの機能・どの大枠作業の行かを示す・2026-09-02） */
+.flow-unit-chip { font-size: 10px; line-height: 16px; white-space: nowrap; color: #4a5b7a; background: #eef2f9; border: 1px solid #d6dfee; border-radius: 6px; padding: 0 5px; }
+.flow-unit-chip.is-task { color: #7a6a3f; background: #f7f2e4; border-color: #e6dcc2; }
 .flow-stage-chip.is-first { color: #fff; background: #7c5cd6; border-color: #7c5cd6; }
 /* 弾ビュー切替（既定=第1弾）。 */
 .flow-stageview-toggle { display: flex; gap: 6px; align-items: center; margin-top: 6px; flex-wrap: wrap; }

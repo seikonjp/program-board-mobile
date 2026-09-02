@@ -438,10 +438,35 @@ function flowSheetLink(link, label) {
   return lk;
 }
 
+// 短い機能名チップ（どの機能・どの大枠作業の話かを行だけで読めるようにする・2026-09-02）。
+//   unitLabel が無ければ出さない。全角8字を超えるものは「…」で切り、title に全文と大枠（親）を入れる
+//   （長押し・ホバーで大枠が読める）。
+function flowUnitChips(it) {
+  const out = [];
+  if (it && it.unitLabel) {
+    const full = String(it.unitLabel);
+    const text = full.length > 8 ? full.slice(0, 8) + '…' : full;
+    const chip = h('span', 'flow-unit-chip', text);
+    const tip = [];
+    if (text !== full) tip.push(full);
+    if (it.parentName) tip.push('大枠: ' + it.parentName);
+    if (tip.length) chip.title = tip.join(' ／ ');
+    out.push(chip);
+    // 実装ではない整理・確認の件（klass='タスク'）だけ第2チップ。
+    if (it.klass === 'タスク') {
+      const t = h('span', 'flow-unit-chip is-task', '整理');
+      t.title = '実装ではない整理・確認の件';
+      out.push(t);
+    }
+  }
+  return out;
+}
+
 // 直近の詳細の1項目（状態チップ＋シナリオ状態＋平易名＋種類/ID＋台帳＋Sheetリンク）。
 function flowItemRow(it) {
   const row = h('div', 'flow-item flow-item-' + it.state);
   row.appendChild(flowStateChip(it));
+  flowUnitChips(it).forEach((c) => row.appendChild(c));
   const sc = flowScenChip(it.scenario); if (sc) row.appendChild(sc);
   const body = h('span', 'flow-item-body');
   body.appendChild(h('span', 'flow-item-label', it.label || it.name || it.code || ''));
@@ -559,6 +584,7 @@ function flowOvRow(it, mapFeats) {
   const row = h('div', 'flow-ov-row flow-item flow-item-' + it.state);
   const chips = h('span', 'flow-ov-chips');
   chips.appendChild(flowStateChip(it));
+  flowUnitChips(it).forEach((c) => chips.appendChild(c));
   const sc = flowScenChip(it.scenario); if (sc) chips.appendChild(sc);
   if (it.legacyDone) {
     const lg = h('span', 'legacy-done-chip', it.legacyChip || '旧方式での完成・新方式での再確認待ち');
