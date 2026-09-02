@@ -46,6 +46,9 @@ let overviewData = null;  // フロー俯瞰（/data/flow-overview.json）
 let stageView = '第1弾';  // 弾ビュー（既定=第1弾・2026-08-15基幹回付①）|'全弾'
 let sphereView = 'all';   // 第1弾サブフィルタ=通常/ゲーム/共通（2026-08-17基幹回付）|'normal'|'game'|'shared'
 
+// 弾ラベルの「第1弾」判定（2026-09-02）。`第1弾` / `第1弾追加` など前方一致で1つに寄せる（Mac板 public/app.js と同型）。
+const isFirstStage = (stage) => /^第1弾/.test(String(stage || ''));
+
 function create(ctx) {
   currentCtx = ctx;
   root = h('div', 'pb-root');
@@ -567,7 +570,7 @@ function flowOvRow(it, mapFeats) {
   body.appendChild(h('span', 'flow-item-label', it.label || it.name || it.code || ''));
   const meta = h('span', 'flow-item-meta');
   // 弾ラベル（UNIT_REGISTRY stage欄・2026-08-15）。第1弾は強調・他は淡色。
-  if (it.stage) meta.appendChild(h('span', 'flow-stage-chip' + (it.stage === '第1弾' ? ' is-first' : ''), it.stage));
+  if (it.stage) meta.appendChild(h('span', 'flow-stage-chip' + (isFirstStage(it.stage) ? ' is-first' : ''), it.stage));
   if (it.kind) meta.appendChild(h('span', 'flow-kind', it.kind));
   if (it.code) meta.appendChild(h('span', 'flow-code', it.code));
   if (it.origin === 'inventory') meta.appendChild(h('span', 'flow-ref', '目録'));
@@ -604,9 +607,9 @@ function renderFlowOverview() {
 
   // 弾ビュー切替（既定=第1弾・2026-08-15基幹回付①・Mac板と同型）。表示だけを絞る（収支の正は上の行）。
   const firstOnly = stageView === '第1弾';
-  const stageMatch = (it) => !firstOnly || it.stage === '第1弾';
+  const stageMatch = (it) => !firstOnly || isFirstStage(it.stage);
   const firstCount = (p.shelves || []).reduce((n, s) => n + (s.groups || []).reduce(
-    (m, g) => m + (g.items || []).filter((it) => it.stage === '第1弾').length, 0), 0);
+    (m, g) => m + (g.items || []).filter((it) => isFirstStage(it.stage)).length, 0), 0);
   const tg = h('div', 'flow-stageview-toggle');
   const mkBtn = (label, mode) => {
     const btn = h('button', 'flow-stageview-btn' + (stageView === mode ? ' is-active' : ''), label);
@@ -622,7 +625,7 @@ function renderFlowOverview() {
   const sphereMatch = (it) => !firstOnly || sphereView === 'all' || it.sphere === sphereView;
   if (firstOnly) {
     const countOf = (sv) => (p.shelves || []).reduce((n, s2) => n + (s2.groups || []).reduce(
-      (m, g) => m + (g.items || []).filter((it) => it.stage === '第1弾' && (sv === 'all' || it.sphere === sv)).length, 0), 0);
+      (m, g) => m + (g.items || []).filter((it) => isFirstStage(it.stage) && (sv === 'all' || it.sphere === sv)).length, 0), 0);
     const sg = h('div', 'flow-stageview-toggle flow-sphere-toggle');
     const mkSphereBtn = (label, mode) => {
       const b = h('button', 'flow-stageview-btn' + (sphereView === mode ? ' is-active' : ''), label);
