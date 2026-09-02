@@ -45,9 +45,31 @@ let flowData = null;      // 直近の詳細（/data/flow-view.json）
 let overviewData = null;  // フロー俯瞰（/data/flow-overview.json）
 let stageView = '第1弾';  // 弾ビュー（既定=第1弾・2026-08-15基幹回付①）|'全弾'
 let sphereView = 'all';   // 第1弾サブフィルタ=通常/ゲーム/共通（2026-08-17基幹回付）|'normal'|'game'|'shared'
+let decisionsEl = null;   // 決定待ち（板ID R4-4・2026-09-02）＝進捗タブ上部の折りたたみ
+let decisionsLoaded = false;
 
 // 弾ラベルの「第1弾」判定（2026-09-02）。`第1弾` / `第1弾追加` など前方一致で1つに寄せる（Mac板 public/app.js と同型）。
 const isFirstStage = (stage) => /^第1弾/.test(String(stage || ''));
+
+// 錨チップ（板ID R4-4・2026-09-02）＝UNIT_REGISTRY の anchors（要件REQ／機能PL_／表紙）を行に小さく出す。
+//   登記に無い件は **1つも出さない**（推測で作らない）。title に ID を全部並べる。
+//   表紙（anchors.cover）は機能チップの title に「表紙＝<パス>」として添える（ローカルパスなので文字表示のみ）。
+function flowAnchorChips(meta, anchors) {
+  if (!meta || !anchors) return;
+  const req = anchors.req || [];
+  const feature = anchors.feature || [];
+  if (req.length) {
+    const c = h('span', 'flow-anchor-chip', '要件' + req.length);
+    c.title = '要件: ' + req.join(' / ');
+    meta.appendChild(c);
+  }
+  if (feature.length) {
+    const c = h('span', 'flow-anchor-chip', '機能' + feature.length);
+    c.title = '機能: ' + feature.join(' / ') + (anchors.cover ? '\n表紙＝' + anchors.cover : '');
+    meta.appendChild(c);
+  }
+}
+
 
 function create(ctx) {
   currentCtx = ctx;
@@ -62,6 +84,12 @@ function create(ctx) {
     switchBar.appendChild(b);
   }
   root.appendChild(switchBar);
+
+  // 決定待ち（板ID R4-4・2026-09-02）＝進捗タブの上部・既定は閉じた折りたたみ。
+  //   決定待ち箱が読めない／0件のときは何も出さない（素通り）。
+  decisionsEl = h('div', 'pb-decisions');
+  decisionsEl.hidden = true;
+  root.appendChild(decisionsEl);
 
   // 状態マップ（既存＝進捗リスト＋作業順序リスト）を1枠にまとめる。
   mapWrap = h('div', 'pb-mapwrap');
@@ -118,7 +146,32 @@ function create(ctx) {
 
 async function onShow(ctx) {
   currentCtx = ctx;
+  if (!decisionsLoaded) { decisionsLoaded = true; loadDecisions(ctx); }
   if (!data) await load(ctx);
+}
+
+// 決定待ちの折りたたみ（板ID R4-4）。読めない／0件は出さない＝進捗タブは何も変わらない。
+async function loadDecisions(ctx) {
+  if (!decisionsEl || !ctx || !ctx.program || typeof ctx.program.loadDecisions !== 'function') return;
+  let list = [];
+  try { list = await ctx.program.loadDecisions(); } catch (e) { list = []; }
+  if (!Array.isArray(list) || list.length === 0) return;
+  const det = h('details', 'pb-decisions-det');
+  det.appendChild(h('summary', 'pb-decisions-sum', '決定待ち ' + list.length + '件'));
+  const ul = h('div', 'pb-decisions-list');
+  for (const d of list) {
+    const row = h('div', 'pb-decisions-row');
+    if (d.priority) row.appendChild(h('span', 'pb-decisions-pri', d.priority));
+    if (d.id) row.appendChild(h('span', 'pb-decisions-id', d.id));
+    row.appendChild(h('span', 'pb-decisions-title', d.title || '（題なし）'));
+    if (d.source) row.appendChild(h('span', 'pb-decisions-src', '出所: ' + d.source));
+    row.title = 'DECISION_QUEUE.md の ' + (d.line || '?') + ' 行目';
+    ul.appendChild(row);
+  }
+  det.appendChild(ul);
+  decisionsEl.innerHTML = '';
+  decisionsEl.appendChild(det);
+  decisionsEl.hidden = false;
 }
 
 async function load(ctx) {
@@ -474,6 +527,7 @@ function flowItemRow(it) {
   if (it.kind) meta.appendChild(h('span', 'flow-kind', it.kind));
   if (it.code) meta.appendChild(h('span', 'flow-code', it.code));
   if (it.ref) meta.appendChild(h('span', 'flow-ref', '台帳: ' + it.ref));
+  flowAnchorChips(meta, it.anchors);
   body.appendChild(meta);
   row.appendChild(body);
   if (it.link && it.link.file && (it.link.type === 'scenario' || it.link.type === 'completion')) {
@@ -601,6 +655,7 @@ function flowOvRow(it, mapFeats) {
   if (it.code) meta.appendChild(h('span', 'flow-code', it.code));
   if (it.origin === 'inventory') meta.appendChild(h('span', 'flow-ref', '目録'));
   if (it.ref) meta.appendChild(h('span', 'flow-ref', it.ref.length > 40 ? it.ref.slice(0, 40) + '…' : it.ref));
+  flowAnchorChips(meta, it.anchors);
   body.appendChild(meta);
   row.appendChild(body);
   if (it.link && it.link.file && it.link.type === 'scenario') row.appendChild(flowSheetLink(it.link, 'シナリオ（ケース表）へ'));

@@ -895,6 +895,12 @@ export function createProgram(dropbox, config) {
   }
   function loadFlowView() { return loadStaticJson('./data/flow-view.json'); }
   function loadFlowOverview() { return loadStaticJson('./data/flow-overview.json'); }
+  // 決定待ち（板ID R4-4・2026-09-02）＝DECISION_QUEUE.md の未裁定行の焼き込み。
+  //   **読めなければ空配列で素通りする**（進捗タブ全体を巻き込んで止めない）。
+  async function loadDecisions() {
+    try { const j = await loadStaticJson('./data/decisions.json'); return Array.isArray(j) ? j : []; }
+    catch (e) { return []; }
+  }
 
   function librarySourceById(id) { return librarySources.find((s) => s.id === id) || null; }
 
@@ -1044,7 +1050,7 @@ export function createProgram(dropbox, config) {
   const SHEET_CACHE_KEY = 'pbm_cache_sheetcore';
   // 版数は殻の build 番号と揃える（index.html / sw.js と同期・㋒テストが監視）。
   // 導出（parser）が変われば必ず build も上がる＝旧い核は自動で捨てられる。
-  const SHEET_CACHE_VERSION = 51;
+  const SHEET_CACHE_VERSION = 52;
   // 上限。実測（2026-08-03・172件）で 91KB＝平均 478B/件。localStorage 全体 5MB 前後の想定に対し十分な余裕を取る。
   const SHEET_CACHE_MAX_BYTES = config.sheetCacheMaxBytes || 1500000;
   let sheetCoreCache = null;          // Map<dropboxPath, { rev, core }>
@@ -1290,6 +1296,7 @@ export function createProgram(dropbox, config) {
     loadProgressBoard,
     loadFlowView,
     loadFlowOverview,
+    loadDecisions,
     loadProjects,
     loadProduction,
     loadGameData,
