@@ -9,6 +9,11 @@ import * as P from '../parser.js';
 
 const NO_SUBJECT = '（主題なし）';
 
+// カード系タブの先頭に出す経路の注記（板ID R3-9・2026-09-02）。既定の経路が変わったことだけを1行で伝える帯。
+// 閉じるボタンも記憶（localStorage）も持たない＝常に出す。一覧そのものは何も減らさない。
+export const CARD_ROUTE_NOTICE =
+  '承認・決定の既定の経路＝チャット（記録は承認台帳）。カードは再開条件つきで保留中＝一気に詰める局面が一段落し、提案が細部になった時に再開（判断はユーザー・2026-09-02）。';
+
 // クエリを空白区切りの語に分解し、各語がいずれかのフィールドに部分一致（AND）するカードを残す。
 function matches(card, terms) {
   const s = card.sections || {};
@@ -36,6 +41,9 @@ export function makeTypeTabView({ id, tabLabel, type, hint }) {
     head.appendChild(h('h2', null, tabLabel));
     if (hint) head.appendChild(h('p', 'view-hint', hint));
     root.appendChild(head);
+
+    // 経路の注記（板ID R3-9・2026-09-02）＝一覧の先頭・控えめな帯。
+    root.appendChild(h('div', 'card-route-notice', CARD_ROUTE_NOTICE));
 
     // 全文検索（title/subject/本文/注釈/tags/処理記録 横断・空白 AND）
     searchInput = h('input', 'field k-search');
